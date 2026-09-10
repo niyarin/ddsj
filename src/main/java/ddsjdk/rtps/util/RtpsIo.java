@@ -36,6 +36,13 @@ public final class RtpsIo {
         return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
     }
 
+
+    public static long readSequenceNumber(byte[] bytes, int offset, boolean littleEndian) {
+        long high = readInt(bytes, offset, littleEndian);
+        long low = readInt(bytes, offset + 4, littleEndian) & 0xffff_ffffL;
+        return (high << 32) | low;
+    }
+
     public static void writeInt(byte[] bytes, int offset, int value, boolean littleEndian) {
         if (littleEndian) {
             bytes[offset] = (byte) value;
