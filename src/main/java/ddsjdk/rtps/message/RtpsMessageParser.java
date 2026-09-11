@@ -12,6 +12,7 @@ import java.util.Optional;
 
 public final class RtpsMessageParser {
     private static final int GUID_PREFIX_OFFSET = 8;
+    private static final int GUID_PREFIX_SIZE = 12;
     private static final int RTPS_HEADER_SIZE = 20;
     private static final int SUBMESSAGE_HEADER_SIZE = 4;
     private static final int INFO_SOURCE_GUID_PREFIX_OFFSET = 4;
@@ -35,6 +36,7 @@ public final class RtpsMessageParser {
         }
 
         GuidPrefix sourceGuidPrefix = new GuidPrefix(Arrays.copyOfRange(packet, GUID_PREFIX_OFFSET, RTPS_HEADER_SIZE));
+        Optional<GuidPrefix> currentDestination = Optional.empty();
         Optional<RtpsTimestamp> currentTimestamp = Optional.empty();
         List<RtpsSubmessage> result = new ArrayList<>();
         int offset = RTPS_HEADER_SIZE;
@@ -53,10 +55,12 @@ public final class RtpsMessageParser {
                 if (infoSourcePrefix.isPresent()) {
                     sourceGuidPrefix = infoSourcePrefix.get();
                 }
+            } else if (kind == RtpsSubmessageKind.INFO_DST) {
+                currentDestination = readInfoDestinationGuidPrefix(body);
             } else if (kind == RtpsSubmessageKind.INFO_TS) {
                 currentTimestamp = readInfoTimestamp(body, flags, littleEndian);
             }
-            result.add(new RtpsSubmessage(sourceGuidPrefix, kind, flags, littleEndian, body, currentTimestamp));
+            result.add(new RtpsSubmessage(sourceGuidPrefix, currentDestination, kind, flags, littleEndian, body, currentTimestamp));
             offset += bodySize;
         }
         return result;
@@ -71,6 +75,13 @@ public final class RtpsMessageParser {
             return Optional.empty();
         }
         return Optional.of(new GuidPrefix(Arrays.copyOfRange(body, INFO_SOURCE_GUID_PREFIX_OFFSET, INFO_SOURCE_SIZE)));
+    }
+
+    private Optional<GuidPrefix> readInfoDestinationGuidPrefix(byte[] body) {
+        if (body.length < GUID_PREFIX_SIZE) {
+            return Optional.empty();
+        }
+        return Optional.of(new GuidPrefix(Arrays.copyOfRange(body, 0, GUID_PREFIX_SIZE)));
     }
 
     private Optional<RtpsTimestamp> readInfoTimestamp(byte[] body, int flags, boolean littleEndian) {

@@ -2,6 +2,7 @@ package ddsjdk.rtps.protocol;
 
 public final class RtpsSubmessageKind {
     public static final int INFO_SRC = 0x0c;
+    public static final int INFO_DST = 0x0e;
     public static final int INFO_TS = 0x09;
     public static final int ACKNACK = 0x06;
     public static final int HEARTBEAT = 0x07;

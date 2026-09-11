@@ -35,6 +35,10 @@ public final class RtpsMessageBuilder {
         submessage(RtpsSubmessageKind.INFO_TS, 0x03, new byte[0]);
     }
 
+    public void infoDst(GuidPrefix destinationGuidPrefix) {
+        submessage(RtpsSubmessageKind.INFO_DST, 0x01, destinationGuidPrefix.bytes());
+    }
+
     public void data(EntityId readerId, EntityId writerId, long sequenceNumber, byte[] serializedPayload) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes(RtpsIo.shortLe(0));

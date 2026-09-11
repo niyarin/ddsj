@@ -233,6 +233,58 @@ class RtpsMessageBuilderTest {
     }
 
     @Test
+    void infoDst_submessageKindAndFlags() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var destPrefix = new GuidPrefix(new byte[]{
+                (byte) 0xaa, (byte) 0xbb, (byte) 0xcc, (byte) 0xdd,
+                (byte) 0xee, (byte) 0xff, 0x11, 0x22,
+                0x33, 0x44, 0x55, 0x66
+        });
+        builder.infoDst(destPrefix);
+        byte[] bytes = builder.bytes();
+
+        assertEquals(RtpsSubmessageKind.INFO_DST, bytes[20] & 0xff);
+        assertEquals(0x01, bytes[21] & 0xff); // little endian flag
+    }
+
+    @Test
+    void infoDst_bodySize() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var destPrefix = new GuidPrefix(new byte[12]);
+        builder.infoDst(destPrefix);
+        byte[] bytes = builder.bytes();
+
+        int bodySize = (bytes[22] & 0xff) | ((bytes[23] & 0xff) << 8);
+        assertEquals(12, bodySize); // GuidPrefix is 12 bytes
+    }
+
+    @Test
+    void infoDst_containsGuidPrefix() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var destPrefix = new GuidPrefix(new byte[]{
+                (byte) 0xaa, (byte) 0xbb, (byte) 0xcc, (byte) 0xdd,
+                (byte) 0xee, (byte) 0xff, 0x11, 0x22,
+                0x33, 0x44, 0x55, 0x66
+        });
+        builder.infoDst(destPrefix);
+        byte[] bytes = builder.bytes();
+
+        // body starts at offset 24
+        assertEquals(0xaa, bytes[24] & 0xff);
+        assertEquals(0xbb, bytes[25] & 0xff);
+        assertEquals(0xcc, bytes[26] & 0xff);
+        assertEquals(0xdd, bytes[27] & 0xff);
+        assertEquals(0xee, bytes[28] & 0xff);
+        assertEquals(0xff, bytes[29] & 0xff);
+        assertEquals(0x11, bytes[30] & 0xff);
+        assertEquals(0x22, bytes[31] & 0xff);
+        assertEquals(0x33, bytes[32] & 0xff);
+        assertEquals(0x44, bytes[33] & 0xff);
+        assertEquals(0x55, bytes[34] & 0xff);
+        assertEquals(0x66, bytes[35] & 0xff);
+    }
+
+    @Test
     void multipleSubmessages_concatenated() {
         var builder = new RtpsMessageBuilder(TEST_PREFIX);
         builder.infoTs(new RtpsTimestamp(100, 200));

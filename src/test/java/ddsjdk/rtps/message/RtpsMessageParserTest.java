@@ -107,6 +107,81 @@ class RtpsMessageParserTest {
     }
 
     @Test
+    void infoDst_parsed() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var destPrefix = new GuidPrefix(new byte[]{
+                (byte) 0xaa, (byte) 0xbb, (byte) 0xcc, (byte) 0xdd,
+                (byte) 0xee, (byte) 0xff, 0x11, 0x22,
+                0x33, 0x44, 0x55, 0x66
+        });
+        builder.infoDst(destPrefix);
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertEquals(1, submessages.size());
+        assertEquals(RtpsSubmessageKind.INFO_DST, submessages.get(0).kind());
+    }
+
+    @Test
+    void infoDst_destinationExtracted() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var destPrefix = new GuidPrefix(new byte[]{
+                (byte) 0xaa, (byte) 0xbb, (byte) 0xcc, (byte) 0xdd,
+                (byte) 0xee, (byte) 0xff, 0x11, 0x22,
+                0x33, 0x44, 0x55, 0x66
+        });
+        builder.infoDst(destPrefix);
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertTrue(submessages.get(0).destinationGuidPrefix().isPresent());
+        assertArrayEquals(destPrefix.bytes(), submessages.get(0).destinationGuidPrefix().get().bytes());
+    }
+
+    @Test
+    void infoDst_propagatesToSubsequentSubmessages() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var destPrefix = new GuidPrefix(new byte[]{
+                (byte) 0xaa, (byte) 0xbb, (byte) 0xcc, (byte) 0xdd,
+                (byte) 0xee, (byte) 0xff, 0x11, 0x22,
+                0x33, 0x44, 0x55, 0x66
+        });
+        builder.infoDst(destPrefix);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.data(readerId, writerId, 1L, new byte[]{0x01});
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertEquals(2, submessages.size());
+
+        // DATA submessage should have the destination
+        assertEquals(RtpsSubmessageKind.DATA, submessages.get(1).kind());
+        assertTrue(submessages.get(1).destinationGuidPrefix().isPresent());
+        assertArrayEquals(destPrefix.bytes(), submessages.get(1).destinationGuidPrefix().get().bytes());
+    }
+
+    @Test
+    void withoutInfoDst_destinationIsEmpty() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.data(readerId, writerId, 1L, new byte[]{0x01});
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertTrue(submessages.get(0).destinationGuidPrefix().isEmpty());
+    }
+
+    @Test
     void data_parsed() {
         var builder = new RtpsMessageBuilder(TEST_PREFIX);
         var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
