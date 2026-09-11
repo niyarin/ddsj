@@ -5,6 +5,7 @@ import ddsjdk.rtps.protocol.RtpsSubmessageKind;
 import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.Guid;
 import ddsjdk.rtps.types.GuidPrefix;
+import ddsjdk.rtps.types.RtpsTimestamp;
 import ddsjdk.rtps.util.RtpsIo;
 
 import java.util.ArrayList;
@@ -28,7 +29,8 @@ public final class RtpsUserDataParser {
                         submessage.sourceGuidPrefix(),
                         submessage.body(),
                         expectedReaderId,
-                        submessage.littleEndian()).ifPresent(result::add);
+                        submessage.littleEndian(),
+                        submessage.timestamp()).ifPresent(result::add);
             }
         }
         return result;
@@ -52,7 +54,8 @@ public final class RtpsUserDataParser {
             GuidPrefix sourceGuidPrefix,
             byte[] body,
             EntityId expectedReaderId,
-            boolean littleEndian) {
+            boolean littleEndian,
+            Optional<RtpsTimestamp> timestamp) {
         if (body.length < 20) {
             return Optional.empty();
         }
@@ -82,7 +85,8 @@ public final class RtpsUserDataParser {
         return Optional.of(new UserDataSample(
                 new Guid(sourceGuidPrefix, writerId),
                 sequenceNumber,
-                Arrays.copyOfRange(body, payloadOffset, body.length)));
+                Arrays.copyOfRange(body, payloadOffset, body.length),
+                timestamp));
     }
 
     private static Optional<Heartbeat> parseHeartbeat(

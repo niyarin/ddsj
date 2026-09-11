@@ -3,6 +3,7 @@ package ddsjdk.rtps.message;
 import ddsjdk.rtps.protocol.RtpsSubmessageKind;
 import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.GuidPrefix;
+import ddsjdk.rtps.types.RtpsTimestamp;
 import org.junit.jupiter.api.Test;
 
 import java.util.Set;
@@ -46,6 +47,60 @@ class RtpsMessageBuilderTest {
         byte[] bytes = builder.bytes();
 
         assertEquals(20, bytes.length); // RTPS header only
+    }
+
+    @Test
+    void infoTs_submessageKindAndFlags() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var timestamp = new RtpsTimestamp(1000, 500000);
+        builder.infoTs(timestamp);
+        byte[] bytes = builder.bytes();
+
+        assertEquals(RtpsSubmessageKind.INFO_TS, bytes[20] & 0xff);
+        assertEquals(0x01, bytes[21] & 0xff); // little endian flag
+    }
+
+    @Test
+    void infoTs_bodySize() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        builder.infoTs(new RtpsTimestamp(1000, 500000));
+        byte[] bytes = builder.bytes();
+
+        int bodySize = (bytes[22] & 0xff) | ((bytes[23] & 0xff) << 8);
+        assertEquals(8, bodySize); // seconds(4) + fraction(4)
+    }
+
+    @Test
+    void infoTs_containsTimestampValues() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        int seconds = 0x12345678;
+        int fraction = 0xabcdef01;
+        builder.infoTs(new RtpsTimestamp(seconds, fraction));
+        byte[] bytes = builder.bytes();
+
+        // little endian seconds at offset 24
+        assertEquals(0x78, bytes[24] & 0xff);
+        assertEquals(0x56, bytes[25] & 0xff);
+        assertEquals(0x34, bytes[26] & 0xff);
+        assertEquals(0x12, bytes[27] & 0xff);
+
+        // little endian fraction at offset 28
+        assertEquals(0x01, bytes[28] & 0xff);
+        assertEquals(0xef, bytes[29] & 0xff);
+        assertEquals(0xcd, bytes[30] & 0xff);
+        assertEquals(0xab, bytes[31] & 0xff);
+    }
+
+    @Test
+    void infoTsInvalid_hasInvalidFlag() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        builder.infoTsInvalid();
+        byte[] bytes = builder.bytes();
+
+        assertEquals(RtpsSubmessageKind.INFO_TS, bytes[20] & 0xff);
+        assertEquals(0x03, bytes[21] & 0xff); // little endian + invalid flag
+        int bodySize = (bytes[22] & 0xff) | ((bytes[23] & 0xff) << 8);
+        assertEquals(0, bodySize); // no body for invalid timestamp
     }
 
     @Test
@@ -175,5 +230,20 @@ class RtpsMessageBuilderTest {
 
         assertEquals(RtpsSubmessageKind.ACKNACK, bytes[20] & 0xff);
         // should not throw exception
+    }
+
+    @Test
+    void multipleSubmessages_concatenated() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        builder.infoTs(new RtpsTimestamp(100, 200));
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.data(readerId, writerId, 1L, new byte[]{0x01});
+        byte[] bytes = builder.bytes();
+
+        // header(20) + INFO_TS(4+8) + DATA(4+24+1)
+        assertTrue(bytes.length > 20 + 12);
+        assertEquals(RtpsSubmessageKind.INFO_TS, bytes[20] & 0xff);
+        assertEquals(RtpsSubmessageKind.DATA, bytes[32] & 0xff);
     }
 }

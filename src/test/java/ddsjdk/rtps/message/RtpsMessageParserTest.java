@@ -3,6 +3,7 @@ package ddsjdk.rtps.message;
 import ddsjdk.rtps.protocol.RtpsSubmessageKind;
 import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.GuidPrefix;
+import ddsjdk.rtps.types.RtpsTimestamp;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -35,6 +36,74 @@ class RtpsMessageParserTest {
         byte[] packet = builder.bytes();
         var parser = new RtpsMessageParser(packet, packet.length);
         assertTrue(parser.submessages().isEmpty());
+    }
+
+    @Test
+    void infoTs_parsed() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        builder.infoTs(new RtpsTimestamp(1234, 5678));
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertEquals(1, submessages.size());
+        assertEquals(RtpsSubmessageKind.INFO_TS, submessages.get(0).kind());
+    }
+
+    @Test
+    void infoTs_timestampExtracted() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var originalTs = new RtpsTimestamp(1234, 5678);
+        builder.infoTs(originalTs);
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertTrue(submessages.get(0).timestamp().isPresent());
+        RtpsTimestamp parsed = submessages.get(0).timestamp().get();
+        assertEquals(originalTs.seconds(), parsed.seconds());
+        assertEquals(originalTs.fraction(), parsed.fraction());
+    }
+
+    @Test
+    void infoTsInvalid_timestampIsInvalid() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        builder.infoTsInvalid();
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertTrue(submessages.get(0).timestamp().isPresent());
+        assertEquals(RtpsTimestamp.INVALID, submessages.get(0).timestamp().get());
+    }
+
+    @Test
+    void infoTs_propagatesToSubsequentSubmessages() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var timestamp = new RtpsTimestamp(9999, 8888);
+        builder.infoTs(timestamp);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.data(readerId, writerId, 1L, new byte[]{0x01, 0x02});
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertEquals(2, submessages.size());
+
+        // INFO_TS submessage
+        assertEquals(RtpsSubmessageKind.INFO_TS, submessages.get(0).kind());
+        assertTrue(submessages.get(0).timestamp().isPresent());
+
+        // DATA submessage should have the same timestamp
+        assertEquals(RtpsSubmessageKind.DATA, submessages.get(1).kind());
+        assertTrue(submessages.get(1).timestamp().isPresent());
+        assertEquals(timestamp.seconds(), submessages.get(1).timestamp().get().seconds());
+        assertEquals(timestamp.fraction(), submessages.get(1).timestamp().get().fraction());
     }
 
     @Test
@@ -113,6 +182,25 @@ class RtpsMessageParserTest {
     }
 
     @Test
+    void multipleSubmessages_allParsed() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        builder.infoTs(new RtpsTimestamp(100, 200));
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.data(readerId, writerId, 1L, new byte[]{0x01});
+        builder.heartbeat(readerId, writerId, 1L, 1L, 1);
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertEquals(3, submessages.size());
+        assertEquals(RtpsSubmessageKind.INFO_TS, submessages.get(0).kind());
+        assertEquals(RtpsSubmessageKind.DATA, submessages.get(1).kind());
+        assertEquals(RtpsSubmessageKind.HEARTBEAT, submessages.get(2).kind());
+    }
+
+    @Test
     void truncatedPacket_parsesAvailableSubmessages() {
         var builder = new RtpsMessageBuilder(TEST_PREFIX);
         var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
@@ -147,5 +235,19 @@ class RtpsMessageParserTest {
 
         body1[0] = (byte) 0xff;
         assertNotEquals(body1[0], body2[0]);
+    }
+
+    @Test
+    void withoutInfoTs_timestampIsEmpty() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.data(readerId, writerId, 1L, new byte[]{0x01});
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertTrue(submessages.get(0).timestamp().isEmpty());
     }
 }

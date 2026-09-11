@@ -6,6 +6,7 @@ import ddsjdk.rtps.protocol.RtpsSubmessageKind;
 import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.Guid;
 import ddsjdk.rtps.types.GuidPrefix;
+import ddsjdk.rtps.types.RtpsTimestamp;
 import ddsjdk.rtps.util.RtpsIo;
 
 import java.io.ByteArrayOutputStream;
@@ -21,6 +22,17 @@ public final class RtpsMessageBuilder {
         out.writeBytes(new byte[] {0x02, 0x05});
         out.writeBytes(new byte[] {0x01, 0x10});
         out.writeBytes(guidPrefix.bytes());
+    }
+
+    public void infoTs(RtpsTimestamp timestamp) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(RtpsIo.intLe(timestamp.seconds()));
+        body.writeBytes(RtpsIo.intLe(timestamp.fraction()));
+        submessage(RtpsSubmessageKind.INFO_TS, 0x01, body.toByteArray());
+    }
+
+    public void infoTsInvalid() {
+        submessage(RtpsSubmessageKind.INFO_TS, 0x03, new byte[0]);
     }
 
     public void data(EntityId readerId, EntityId writerId, long sequenceNumber, byte[] serializedPayload) {

@@ -21,6 +21,7 @@ import ddsjdk.rtps.transport.UdpRtpsTransport;
 import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.GuidPrefix;
 import ddsjdk.rtps.types.RtpsGuid;
+import ddsjdk.rtps.types.RtpsTimestamp;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -132,6 +133,7 @@ public final class RtpsDataWriter<T> implements Closeable {
 
     private void sendUserData(long sequenceNumber, byte[] payload) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
+        message.infoTs(RtpsTimestamp.now());
         message.data(RtpsEntity.USER_READER_NO_KEY, RtpsEntity.USER_WRITER_NO_KEY, sequenceNumber, payload);
         sendToUserLocators(message.bytes());
     }
