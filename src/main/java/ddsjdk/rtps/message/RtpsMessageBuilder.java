@@ -51,6 +51,24 @@ public final class RtpsMessageBuilder {
         submessage(RtpsSubmessageKind.DATA, 0x05, body.toByteArray());
     }
 
+    public void dataFrag(EntityId readerId, EntityId writerId, long sequenceNumber,
+                         int fragmentStartingNum, int fragmentsInSubmessage,
+                         int fragmentSize, int sampleSize, byte[] fragmentData) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(RtpsIo.shortLe(0)); // extraFlags
+        body.writeBytes(RtpsIo.shortLe(28)); // octetsToInlineQos
+        body.writeBytes(readerId.bytes());
+        body.writeBytes(writerId.bytes());
+        body.writeBytes(RtpsIo.intLe((int) (sequenceNumber >>> 32)));
+        body.writeBytes(RtpsIo.intLe((int) sequenceNumber));
+        body.writeBytes(RtpsIo.intLe(fragmentStartingNum));
+        body.writeBytes(RtpsIo.shortLe(fragmentsInSubmessage));
+        body.writeBytes(RtpsIo.shortLe(fragmentSize));
+        body.writeBytes(RtpsIo.intLe(sampleSize));
+        body.writeBytes(fragmentData);
+        submessage(RtpsSubmessageKind.DATA_FRAG, 0x01, body.toByteArray());
+    }
+
     public void dataDispose(EntityId readerId, EntityId writerId, long sequenceNumber, Guid endpointGuid) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes(RtpsIo.shortLe(0));

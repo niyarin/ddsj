@@ -50,6 +50,21 @@ public final class RtpsUserDataParser {
         return result;
     }
 
+    public static List<DataFragment> readDataFragments(byte[] packet, int length, EntityId expectedReaderId) {
+        List<DataFragment> result = new ArrayList<>();
+        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+            if (submessage.kind() == RtpsSubmessageKind.DATA_FRAG) {
+                parseDataFragmentSubmessage(
+                        submessage.sourceGuidPrefix(),
+                        submessage.body(),
+                        expectedReaderId,
+                        submessage.littleEndian(),
+                        submessage.timestamp()).ifPresent(result::add);
+            }
+        }
+        return result;
+    }
+
     private static Optional<UserDataSample> parseUserDataSubmessage(
             GuidPrefix sourceGuidPrefix,
             byte[] body,
@@ -86,6 +101,47 @@ public final class RtpsUserDataParser {
                 new Guid(sourceGuidPrefix, writerId),
                 sequenceNumber,
                 Arrays.copyOfRange(body, payloadOffset, body.length),
+                timestamp));
+    }
+
+    private static Optional<DataFragment> parseDataFragmentSubmessage(
+            GuidPrefix sourceGuidPrefix,
+            byte[] body,
+            EntityId expectedReaderId,
+            boolean littleEndian,
+            Optional<RtpsTimestamp> timestamp) {
+        // Minimum size: extraFlags(2) + octetsToInlineQos(2) + readerId(4) + writerId(4)
+        //              + sequenceNumber(8) + fragmentStartingNum(4) + fragmentsInSubmessage(2)
+        //              + fragmentSize(2) + sampleSize(4) = 32 bytes
+        if (body.length < 32) {
+            return Optional.empty();
+        }
+        int octetsToInlineQos = RtpsIo.readUShort(body, 2, littleEndian);
+        EntityId readerId = new EntityId(Arrays.copyOfRange(body, 4, 8));
+        if (!readerId.equals(expectedReaderId) && !isUnknownEntity(readerId)) {
+            return Optional.empty();
+        }
+        EntityId writerId = new EntityId(Arrays.copyOfRange(body, 8, 12));
+        long sequenceNumber = RtpsIo.readSequenceNumber(body, 12, littleEndian);
+        int fragmentStartingNum = RtpsIo.readInt(body, 20, littleEndian);
+        int fragmentsInSubmessage = RtpsIo.readUShort(body, 24, littleEndian);
+        int fragmentSize = RtpsIo.readUShort(body, 26, littleEndian);
+        int sampleSize = RtpsIo.readInt(body, 28, littleEndian);
+
+        int fragmentDataOffset = 4 + octetsToInlineQos;
+        if (fragmentDataOffset > body.length) {
+            return Optional.empty();
+        }
+        byte[] fragmentData = Arrays.copyOfRange(body, fragmentDataOffset, body.length);
+
+        return Optional.of(new DataFragment(
+                new Guid(sourceGuidPrefix, writerId),
+                sequenceNumber,
+                fragmentStartingNum,
+                fragmentsInSubmessage,
+                fragmentSize,
+                sampleSize,
+                fragmentData,
                 timestamp));
     }
 

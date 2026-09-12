@@ -325,4 +325,92 @@ class RtpsMessageParserTest {
 
         assertTrue(submessages.get(0).timestamp().isEmpty());
     }
+
+    @Test
+    void dataFrag_parsed() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.dataFrag(readerId, writerId, 1L, 1, 1, 1024, 5000, new byte[]{0x01, 0x02});
+        byte[] packet = builder.bytes();
+
+        var parser = new RtpsMessageParser(packet, packet.length);
+        List<RtpsSubmessage> submessages = parser.submessages();
+
+        assertEquals(1, submessages.size());
+        assertEquals(RtpsSubmessageKind.DATA_FRAG, submessages.get(0).kind());
+    }
+
+    @Test
+    void dataFrag_fragmentInfoExtracted() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        byte[] fragmentData = {(byte) 0xaa, (byte) 0xbb, (byte) 0xcc};
+        builder.dataFrag(readerId, writerId, 42L, 3, 1, 1024, 5000, fragmentData);
+        byte[] packet = builder.bytes();
+
+        List<DataFragment> fragments = RtpsUserDataParser.readDataFragments(packet, packet.length, readerId);
+
+        assertEquals(1, fragments.size());
+        DataFragment frag = fragments.get(0);
+        assertEquals(42L, frag.sequenceNumber());
+        assertEquals(3, frag.fragmentStartingNum());
+        assertEquals(1, frag.fragmentsInSubmessage());
+        assertEquals(1024, frag.fragmentSize());
+        assertEquals(5000, frag.sampleSize());
+        assertArrayEquals(fragmentData, frag.fragmentData());
+    }
+
+    @Test
+    void dataFrag_totalFragmentsCalculated() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.dataFrag(readerId, writerId, 1L, 1, 1, 1024, 5000, new byte[]{0x01});
+        byte[] packet = builder.bytes();
+
+        List<DataFragment> fragments = RtpsUserDataParser.readDataFragments(packet, packet.length, readerId);
+
+        DataFragment frag = fragments.get(0);
+        // 5000 / 1024 = 4.88 -> 5 fragments
+        assertEquals(5, frag.totalFragments());
+    }
+
+    @Test
+    void dataFrag_isLastFragment() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+
+        // Not last fragment (fragment 1 of 5)
+        builder.dataFrag(readerId, writerId, 1L, 1, 1, 1024, 5000, new byte[]{0x01});
+        byte[] packet1 = builder.bytes();
+        List<DataFragment> fragments1 = RtpsUserDataParser.readDataFragments(packet1, packet1.length, readerId);
+        assertFalse(fragments1.get(0).isLastFragment());
+
+        // Last fragment (fragment 5 of 5)
+        var builder2 = new RtpsMessageBuilder(TEST_PREFIX);
+        builder2.dataFrag(readerId, writerId, 1L, 5, 1, 1024, 5000, new byte[]{0x01});
+        byte[] packet2 = builder2.bytes();
+        List<DataFragment> fragments2 = RtpsUserDataParser.readDataFragments(packet2, packet2.length, readerId);
+        assertTrue(fragments2.get(0).isLastFragment());
+    }
+
+    @Test
+    void dataFrag_withTimestamp() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var timestamp = new RtpsTimestamp(1234, 5678);
+        builder.infoTs(timestamp);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.dataFrag(readerId, writerId, 1L, 1, 1, 1024, 2048, new byte[]{0x01});
+        byte[] packet = builder.bytes();
+
+        List<DataFragment> fragments = RtpsUserDataParser.readDataFragments(packet, packet.length, readerId);
+
+        assertEquals(1, fragments.size());
+        assertTrue(fragments.get(0).timestamp().isPresent());
+        assertEquals(timestamp.seconds(), fragments.get(0).timestamp().get().seconds());
+    }
 }

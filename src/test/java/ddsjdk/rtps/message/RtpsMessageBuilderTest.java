@@ -285,6 +285,69 @@ class RtpsMessageBuilderTest {
     }
 
     @Test
+    void dataFrag_submessageKindAndFlags() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        builder.dataFrag(readerId, writerId, 1L, 1, 1, 1024, 5000, new byte[]{0x01, 0x02});
+        byte[] bytes = builder.bytes();
+
+        assertEquals(RtpsSubmessageKind.DATA_FRAG, bytes[20] & 0xff);
+        assertEquals(0x01, bytes[21] & 0xff); // little endian flag
+    }
+
+    @Test
+    void dataFrag_containsFragmentInfo() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        int fragmentStartingNum = 3;
+        int fragmentsInSubmessage = 1;
+        int fragmentSize = 1024;
+        int sampleSize = 5000;
+        builder.dataFrag(readerId, writerId, 42L, fragmentStartingNum, fragmentsInSubmessage,
+                fragmentSize, sampleSize, new byte[]{0x01, 0x02});
+        byte[] bytes = builder.bytes();
+
+        // fragmentStartingNum at offset 20+4+20 = 44 (little endian)
+        assertEquals(3, bytes[44] & 0xff);
+        assertEquals(0, bytes[45] & 0xff);
+        assertEquals(0, bytes[46] & 0xff);
+        assertEquals(0, bytes[47] & 0xff);
+
+        // fragmentsInSubmessage at offset 48 (2 bytes)
+        assertEquals(1, bytes[48] & 0xff);
+        assertEquals(0, bytes[49] & 0xff);
+
+        // fragmentSize at offset 50 (2 bytes)
+        assertEquals(0x00, bytes[50] & 0xff);
+        assertEquals(0x04, bytes[51] & 0xff);
+
+        // sampleSize at offset 52 (4 bytes)
+        assertEquals(0x88, bytes[52] & 0xff);
+        assertEquals(0x13, bytes[53] & 0xff);
+        assertEquals(0x00, bytes[54] & 0xff);
+        assertEquals(0x00, bytes[55] & 0xff);
+    }
+
+    @Test
+    void dataFrag_containsFragmentData() {
+        var builder = new RtpsMessageBuilder(TEST_PREFIX);
+        var readerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x04});
+        var writerId = new EntityId(new byte[]{0x00, 0x00, 0x00, 0x03});
+        byte[] fragmentData = {(byte) 0xde, (byte) 0xad, (byte) 0xbe, (byte) 0xef};
+        builder.dataFrag(readerId, writerId, 1L, 1, 1, 1024, 4, fragmentData);
+        byte[] bytes = builder.bytes();
+
+        // fragment data starts after header (24 octetsToInlineQos) at offset 20+4+28 = 52
+        int dataOffset = bytes.length - fragmentData.length;
+        assertEquals(0xde, bytes[dataOffset] & 0xff);
+        assertEquals(0xad, bytes[dataOffset + 1] & 0xff);
+        assertEquals(0xbe, bytes[dataOffset + 2] & 0xff);
+        assertEquals(0xef, bytes[dataOffset + 3] & 0xff);
+    }
+
+    @Test
     void multipleSubmessages_concatenated() {
         var builder = new RtpsMessageBuilder(TEST_PREFIX);
         builder.infoTs(new RtpsTimestamp(100, 200));
