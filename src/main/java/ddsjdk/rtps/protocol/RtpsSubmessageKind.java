@@ -9,6 +9,8 @@ public final class RtpsSubmessageKind {
     public static final int GAP = 0x08;
     public static final int DATA = 0x15;
     public static final int DATA_FRAG = 0x16;
+    public static final int HEARTBEAT_FRAG = 0x13;
+    public static final int NACK_FRAG = 0x12;
 
     private RtpsSubmessageKind() {
     }

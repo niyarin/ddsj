@@ -96,6 +96,17 @@ public final class RtpsMessageBuilder {
         submessage(RtpsSubmessageKind.HEARTBEAT, 0x07, body.toByteArray());
     }
 
+    public void heartbeatFrag(EntityId readerId, EntityId writerId, long writerSequenceNumber, int lastFragmentNum, int count) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(readerId.bytes());
+        body.writeBytes(writerId.bytes());
+        body.writeBytes(RtpsIo.intLe((int) (writerSequenceNumber >>> 32)));
+        body.writeBytes(RtpsIo.intLe((int) writerSequenceNumber));
+        body.writeBytes(RtpsIo.intLe(lastFragmentNum));
+        body.writeBytes(RtpsIo.intLe(count));
+        submessage(RtpsSubmessageKind.HEARTBEAT_FRAG, 0x01, body.toByteArray());
+    }
+
     public void gap(EntityId readerId, EntityId writerId, long gapStart) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes(readerId.bytes());

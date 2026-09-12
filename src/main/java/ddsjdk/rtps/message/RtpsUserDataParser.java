@@ -65,6 +65,20 @@ public final class RtpsUserDataParser {
         return result;
     }
 
+    public static List<HeartbeatFrag> readHeartbeatFrags(byte[] packet, int length, EntityId expectedReaderId) {
+        List<HeartbeatFrag> result = new ArrayList<>();
+        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+            if (submessage.kind() == RtpsSubmessageKind.HEARTBEAT_FRAG) {
+                parseHeartbeatFrag(
+                        submessage.sourceGuidPrefix(),
+                        submessage.body(),
+                        expectedReaderId,
+                        submessage.littleEndian()).ifPresent(result::add);
+            }
+        }
+        return result;
+    }
+
     private static Optional<UserDataSample> parseUserDataSubmessage(
             GuidPrefix sourceGuidPrefix,
             byte[] body,
@@ -163,6 +177,27 @@ public final class RtpsUserDataParser {
                 RtpsIo.readSequenceNumber(body, 8, littleEndian),
                 RtpsIo.readSequenceNumber(body, 16, littleEndian),
                 RtpsIo.readInt(body, 24, littleEndian)));
+    }
+
+    private static Optional<HeartbeatFrag> parseHeartbeatFrag(
+            GuidPrefix sourceGuidPrefix,
+            byte[] body,
+            EntityId expectedReaderId,
+            boolean littleEndian) {
+        // Minimum size: readerId(4) + writerId(4) + writerSN(8) + lastFragmentNum(4) + count(4) = 24 bytes
+        if (body.length < 24) {
+            return Optional.empty();
+        }
+        EntityId readerId = new EntityId(Arrays.copyOfRange(body, 0, 4));
+        if (!readerId.equals(expectedReaderId) && !isUnknownEntity(readerId)) {
+            return Optional.empty();
+        }
+        return Optional.of(new HeartbeatFrag(
+                readerId,
+                new Guid(sourceGuidPrefix, new EntityId(Arrays.copyOfRange(body, 4, 8))),
+                RtpsIo.readSequenceNumber(body, 8, littleEndian),
+                RtpsIo.readInt(body, 16, littleEndian),
+                RtpsIo.readInt(body, 20, littleEndian)));
     }
 
     private static Optional<Integer> skipInlineQos(byte[] packet, int offset, int end, boolean littleEndian) {
