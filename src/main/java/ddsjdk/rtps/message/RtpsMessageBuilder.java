@@ -107,6 +107,37 @@ public final class RtpsMessageBuilder {
         submessage(RtpsSubmessageKind.HEARTBEAT_FRAG, 0x01, body.toByteArray());
     }
 
+    public void nackFrag(EntityId readerId, EntityId writerId, long writerSequenceNumber,
+                         Set<Integer> missingFragmentNumbers, int count) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(readerId.bytes());
+        body.writeBytes(writerId.bytes());
+        body.writeBytes(RtpsIo.intLe((int) (writerSequenceNumber >>> 32)));
+        body.writeBytes(RtpsIo.intLe((int) writerSequenceNumber));
+
+        Integer maxMissing = missingFragmentNumbers.stream().max(Integer::compareTo).orElse(null);
+        Integer minMissing = missingFragmentNumbers.stream().min(Integer::compareTo).orElse(null);
+        int bitmapBase = minMissing == null ? 1 : minMissing;
+        int numBits = maxMissing == null ? 0 : Math.clamp(maxMissing - bitmapBase + 1, 0, 256);
+
+        body.writeBytes(RtpsIo.intLe(bitmapBase));
+        body.writeBytes(RtpsIo.intLe(numBits));
+
+        int wordCount = (numBits + 31) / 32;
+        for (int wordIndex = 0; wordIndex < wordCount; wordIndex++) {
+            int word = 0;
+            for (int bit = 0; bit < 32; bit++) {
+                int bitIndex = wordIndex * 32 + bit;
+                if (bitIndex < numBits && missingFragmentNumbers.contains(bitmapBase + bitIndex)) {
+                    word |= 1 << (31 - bit);
+                }
+            }
+            body.writeBytes(RtpsIo.intLe(word));
+        }
+        body.writeBytes(RtpsIo.intLe(count));
+        submessage(RtpsSubmessageKind.NACK_FRAG, 0x01, body.toByteArray());
+    }
+
     public void gap(EntityId readerId, EntityId writerId, long gapStart) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes(readerId.bytes());

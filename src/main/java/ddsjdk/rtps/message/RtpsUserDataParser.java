@@ -10,8 +10,10 @@ import ddsjdk.rtps.util.RtpsIo;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public final class RtpsUserDataParser {
     private RtpsUserDataParser() {
@@ -73,6 +75,19 @@ public final class RtpsUserDataParser {
                         submessage.sourceGuidPrefix(),
                         submessage.body(),
                         expectedReaderId,
+                        submessage.littleEndian()).ifPresent(result::add);
+            }
+        }
+        return result;
+    }
+
+    public static List<NackFrag> readNackFrags(byte[] packet, int length) {
+        List<NackFrag> result = new ArrayList<>();
+        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+            if (submessage.kind() == RtpsSubmessageKind.NACK_FRAG) {
+                parseNackFrag(
+                        submessage.sourceGuidPrefix(),
+                        submessage.body(),
                         submessage.littleEndian()).ifPresent(result::add);
             }
         }
@@ -198,6 +213,49 @@ public final class RtpsUserDataParser {
                 RtpsIo.readSequenceNumber(body, 8, littleEndian),
                 RtpsIo.readInt(body, 16, littleEndian),
                 RtpsIo.readInt(body, 20, littleEndian)));
+    }
+
+    private static Optional<NackFrag> parseNackFrag(
+            GuidPrefix sourceGuidPrefix,
+            byte[] body,
+            boolean littleEndian) {
+        // Minimum size: readerId(4) + writerId(4) + writerSN(8) + bitmapBase(4) + numBits(4) + count(4) = 28 bytes
+        if (body.length < 28) {
+            return Optional.empty();
+        }
+        EntityId readerId = new EntityId(Arrays.copyOfRange(body, 0, 4));
+        EntityId writerId = new EntityId(Arrays.copyOfRange(body, 4, 8));
+        long writerSequenceNumber = RtpsIo.readSequenceNumber(body, 8, littleEndian);
+        int bitmapBase = RtpsIo.readInt(body, 16, littleEndian);
+        int numBits = RtpsIo.readInt(body, 20, littleEndian);
+
+        if (numBits < 0 || numBits > 256) {
+            return Optional.empty();
+        }
+
+        int wordCount = (numBits + 31) / 32;
+        int bitmapOffset = 24;
+        int countOffset = bitmapOffset + wordCount * 4;
+        if (countOffset + 4 > body.length) {
+            return Optional.empty();
+        }
+
+        Set<Integer> requestedFragments = new LinkedHashSet<>();
+        for (int bitIndex = 0; bitIndex < numBits; bitIndex++) {
+            int word = RtpsIo.readInt(body, bitmapOffset + (bitIndex / 32) * 4, littleEndian);
+            int mask = 1 << (31 - bitIndex % 32);
+            if ((word & mask) != 0) {
+                requestedFragments.add(bitmapBase + bitIndex);
+            }
+        }
+
+        int count = RtpsIo.readInt(body, countOffset, littleEndian);
+        return Optional.of(new NackFrag(
+                readerId,
+                new Guid(sourceGuidPrefix, writerId),
+                writerSequenceNumber,
+                requestedFragments,
+                count));
     }
 
     private static Optional<Integer> skipInlineQos(byte[] packet, int offset, int end, boolean littleEndian) {
