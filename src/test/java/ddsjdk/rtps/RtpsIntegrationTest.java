@@ -320,6 +320,48 @@ class RtpsIntegrationTest {
         }
     }
 
+    @Test
+    void largeDataTransfer_fragmentedPubSub() throws Exception {
+        PayloadSerializer<byte[]> byteArraySerializer = new PayloadSerializer<>() {
+            @Override
+            public byte[] serialize(byte[] value) {
+                return value;
+            }
+
+            @Override
+            public byte[] deserialize(byte[] payload) {
+                return payload;
+            }
+        };
+
+        var qos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var endpoint = new LocalEndpoint("LargeDataTopic", "ByteArray", qos);
+
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 22);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 23);
+
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, byteArraySerializer);
+             var reader = new RtpsDataReader<>(readerConfig, endpoint, byteArraySerializer)) {
+
+            Thread.sleep(1500);
+
+            // Create large payload (100KB - above fragmentation threshold)
+            byte[] largePayload = new byte[100_000];
+            for (int i = 0; i < largePayload.length; i++) {
+                largePayload[i] = (byte) (i % 256);
+            }
+
+            writer.write(largePayload);
+
+            // Wait for fragments to arrive and be assembled
+            Thread.sleep(3000);
+
+            byte[] received = reader.read(Duration.ofSeconds(5));
+            assertNotNull(received, "Should receive large fragmented data");
+            assertArrayEquals(largePayload, received);
+        }
+    }
+
     private static InetAddress defaultMulticast() throws IOException {
         return InetAddress.getByName("239.255.0.1");
     }

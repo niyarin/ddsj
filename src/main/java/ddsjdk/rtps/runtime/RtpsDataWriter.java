@@ -13,6 +13,9 @@ import ddsjdk.rtps.discovery.SpdpDiscoveryListener;
 import ddsjdk.rtps.history.WriterHistoryCache;
 import ddsjdk.rtps.message.AckNack;
 import ddsjdk.rtps.message.AckNackListener;
+import ddsjdk.rtps.message.FragmentSender;
+import ddsjdk.rtps.message.NackFrag;
+import ddsjdk.rtps.message.NackFragListener;
 import ddsjdk.rtps.message.RtpsMessageBuilder;
 import ddsjdk.rtps.protocol.RtpsEntity;
 import ddsjdk.rtps.transport.RtpsParticipantConfig;
@@ -49,6 +52,8 @@ public final class RtpsDataWriter<T> implements Closeable {
     private final SedpPublicationAnnouncer sedpPublicationAnnouncer;
     private final SpdpDiscoveryListener discoveryListener;
     private final AckNackListener ackNackListener;
+    private final NackFragListener nackFragListener;
+    private final FragmentSender fragmentSender;
     private final Thread announcer;
 
     public RtpsDataWriter(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
@@ -73,6 +78,11 @@ public final class RtpsDataWriter<T> implements Closeable {
                 transport,
                 Set.of(RtpsEntity.USER_WRITER_NO_KEY, RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER),
                 this::handleAckNack);
+        this.nackFragListener = new NackFragListener(
+                transport,
+                Set.of(RtpsEntity.USER_WRITER_NO_KEY),
+                this::handleNackFrag);
+        this.fragmentSender = new FragmentSender();
         this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-writer-announcer-" + endpoint.topicName());
         this.announcer.setDaemon(true);
         this.announcer.start();
@@ -117,6 +127,29 @@ public final class RtpsDataWriter<T> implements Closeable {
         }
     }
 
+    private void handleNackFrag(NackFrag nackFrag) {
+        if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
+            return;
+        }
+        try {
+            fragmentSender.resendFragments(
+                    guidPrefix,
+                    nackFrag.readerId(),
+                    RtpsEntity.USER_WRITER_NO_KEY,
+                    nackFrag.writerSequenceNumber(),
+                    nackFrag.requestedFragmentNumbers(),
+                    msg -> {
+                        try {
+                            sendToUserLocators(msg);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private void resendRequestedSamples(AckNack ackNack) throws IOException {
         if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
             return;
@@ -132,10 +165,34 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     private void sendUserData(long sequenceNumber, byte[] payload) throws IOException {
+        if (fragmentSender.requiresFragmentation(payload)) {
+            sendUserDataFragmented(sequenceNumber, payload);
+        } else {
+            sendUserDataComplete(sequenceNumber, payload);
+        }
+    }
+
+    private void sendUserDataComplete(long sequenceNumber, byte[] payload) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.infoTs(RtpsTimestamp.now());
         message.data(RtpsEntity.USER_READER_NO_KEY, RtpsEntity.USER_WRITER_NO_KEY, sequenceNumber, payload);
         sendToUserLocators(message.bytes());
+    }
+
+    private void sendUserDataFragmented(long sequenceNumber, byte[] payload) throws IOException {
+        fragmentSender.sendFragmented(
+                guidPrefix,
+                RtpsEntity.USER_READER_NO_KEY,
+                RtpsEntity.USER_WRITER_NO_KEY,
+                sequenceNumber,
+                payload,
+                msg -> {
+                    try {
+                        sendToUserLocators(msg);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
     }
 
     private void sendUserHeartbeat() throws IOException {
@@ -198,6 +255,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         announcer.interrupt();
         IOException first = null;
         first = closeOrCapture(() -> sedpPublicationAnnouncer.disposeAndUnregister(), first);
+        first = closeOrCapture(nackFragListener, first);
         first = closeOrCapture(ackNackListener, first);
         first = closeOrCapture(discoveryListener, first);
         first = closeOrCapture(transport, first);

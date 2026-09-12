@@ -1,0 +1,192 @@
+package ddsjdk.rtps.message;
+
+import ddsjdk.rtps.types.EntityId;
+import ddsjdk.rtps.types.GuidPrefix;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+
+/**
+ * Handles fragmenting large payloads into DATA_FRAG submessages.
+ */
+public final class FragmentSender {
+    /** Default fragment size (1024 bytes, conservative for UDP) */
+    public static final int DEFAULT_FRAGMENT_SIZE = 1024;
+
+    /** Threshold above which fragmentation is used */
+    public static final int DEFAULT_FRAGMENTATION_THRESHOLD = 64000;
+
+    private final int fragmentSize;
+    private final int fragmentationThreshold;
+    private final Map<Long, FragmentedSample> fragmentedSamples = new ConcurrentHashMap<>();
+    private final AtomicInteger heartbeatFragCount = new AtomicInteger(1);
+
+    public FragmentSender() {
+        this(DEFAULT_FRAGMENT_SIZE, DEFAULT_FRAGMENTATION_THRESHOLD);
+    }
+
+    public FragmentSender(int fragmentSize, int fragmentationThreshold) {
+        if (fragmentSize <= 0) {
+            throw new IllegalArgumentException("fragmentSize must be positive");
+        }
+        this.fragmentSize = fragmentSize;
+        this.fragmentationThreshold = fragmentationThreshold;
+    }
+
+    /**
+     * Checks if a payload requires fragmentation.
+     */
+    public boolean requiresFragmentation(byte[] payload) {
+        return payload.length > fragmentationThreshold;
+    }
+
+    /**
+     * Sends a payload as DATA_FRAG submessages.
+     *
+     * @param guidPrefix the writer's GUID prefix
+     * @param readerId target reader entity ID
+     * @param writerId writer entity ID
+     * @param sequenceNumber the sample's sequence number
+     * @param payload the full payload to fragment
+     * @param sender callback to send each built message
+     */
+    public void sendFragmented(
+            GuidPrefix guidPrefix,
+            EntityId readerId,
+            EntityId writerId,
+            long sequenceNumber,
+            byte[] payload,
+            Consumer<byte[]> sender) throws IOException {
+
+        int sampleSize = payload.length;
+        int totalFragments = (sampleSize + fragmentSize - 1) / fragmentSize;
+
+        // Store for potential retransmission
+        fragmentedSamples.put(sequenceNumber, new FragmentedSample(payload, totalFragments));
+
+        // Send all fragments
+        for (int fragNum = 1; fragNum <= totalFragments; fragNum++) {
+            byte[] fragMessage = buildFragmentMessage(
+                    guidPrefix, readerId, writerId, sequenceNumber,
+                    fragNum, payload, sampleSize);
+            sender.accept(fragMessage);
+        }
+    }
+
+    /**
+     * Resends specific fragments for a sequence number.
+     *
+     * @return true if fragments were sent, false if sample not found
+     */
+    public boolean resendFragments(
+            GuidPrefix guidPrefix,
+            EntityId readerId,
+            EntityId writerId,
+            long sequenceNumber,
+            Set<Integer> fragmentNumbers,
+            Consumer<byte[]> sender) throws IOException {
+
+        FragmentedSample sample = fragmentedSamples.get(sequenceNumber);
+        if (sample == null) {
+            return false;
+        }
+
+        for (int fragNum : fragmentNumbers) {
+            if (fragNum < 1 || fragNum > sample.totalFragments) {
+                continue;
+            }
+            byte[] fragMessage = buildFragmentMessage(
+                    guidPrefix, readerId, writerId, sequenceNumber,
+                    fragNum, sample.payload, sample.payload.length);
+            sender.accept(fragMessage);
+        }
+        return true;
+    }
+
+    /**
+     * Builds a HEARTBEAT_FRAG message for a fragmented sample.
+     */
+    public Optional<byte[]> buildHeartbeatFrag(
+            GuidPrefix guidPrefix,
+            EntityId readerId,
+            EntityId writerId,
+            long sequenceNumber) {
+
+        FragmentedSample sample = fragmentedSamples.get(sequenceNumber);
+        if (sample == null) {
+            return Optional.empty();
+        }
+
+        RtpsMessageBuilder builder = new RtpsMessageBuilder(guidPrefix);
+        builder.heartbeatFrag(readerId, writerId, sequenceNumber,
+                sample.totalFragments, heartbeatFragCount.getAndIncrement());
+        return Optional.of(builder.bytes());
+    }
+
+    /**
+     * Removes a fragmented sample from cache (e.g., when fully acknowledged).
+     */
+    public void removeSample(long sequenceNumber) {
+        fragmentedSamples.remove(sequenceNumber);
+    }
+
+    /**
+     * Checks if a sequence number has a fragmented sample cached.
+     */
+    public boolean hasFragmentedSample(long sequenceNumber) {
+        return fragmentedSamples.containsKey(sequenceNumber);
+    }
+
+    /**
+     * Returns the total number of fragments for a cached sample.
+     */
+    public Optional<Integer> getTotalFragments(long sequenceNumber) {
+        FragmentedSample sample = fragmentedSamples.get(sequenceNumber);
+        return sample == null ? Optional.empty() : Optional.of(sample.totalFragments);
+    }
+
+    /**
+     * Returns the fragment size used by this sender.
+     */
+    public int fragmentSize() {
+        return fragmentSize;
+    }
+
+    /**
+     * Returns the fragmentation threshold.
+     */
+    public int fragmentationThreshold() {
+        return fragmentationThreshold;
+    }
+
+    private byte[] buildFragmentMessage(
+            GuidPrefix guidPrefix,
+            EntityId readerId,
+            EntityId writerId,
+            long sequenceNumber,
+            int fragmentNum,
+            byte[] payload,
+            int sampleSize) {
+
+        int startOffset = (fragmentNum - 1) * fragmentSize;
+        int endOffset = Math.min(startOffset + fragmentSize, sampleSize);
+        byte[] fragmentData = Arrays.copyOfRange(payload, startOffset, endOffset);
+
+        RtpsMessageBuilder builder = new RtpsMessageBuilder(guidPrefix);
+        builder.dataFrag(readerId, writerId, sequenceNumber,
+                fragmentNum, 1, fragmentSize, sampleSize, fragmentData);
+        return builder.bytes();
+    }
+
+    private record FragmentedSample(byte[] payload, int totalFragments) {
+        FragmentedSample {
+            payload = payload.clone();
+        }
+    }
+}
