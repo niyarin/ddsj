@@ -1,6 +1,5 @@
 package ddsjdk.rtps.runtime;
 
-import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
 import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
@@ -36,7 +35,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class RtpsDataWriter<T> implements Closeable {
-    private static final int DEFAULT_KEEP_ALL_WRITER_HISTORY_LIMIT = 128;
     private static final long ANNOUNCE_INTERVAL_MILLIS = 1000L;
 
     private final LocalEndpoint endpoint;
@@ -70,9 +68,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         this.endpoint = endpoint;
         this.serializer = serializer;
         this.transport = transport;
-        this.history = new WriterHistoryCache(endpoint.qos().history() == HistoryKind.KEEP_LAST
-                ? endpoint.qos().depth()
-                : DEFAULT_KEEP_ALL_WRITER_HISTORY_LIMIT);
+        this.history = new WriterHistoryCache(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
         this.spdpAnnouncer = new SpdpAnnouncer(config, transport, guidPrefix);
         this.sedpPublicationAnnouncer = new SedpPublicationAnnouncer(endpoint, transport, guidPrefix, remoteParticipants);
         this.discoveryListener = new SpdpDiscoveryListener(transport, guidPrefix, remoteParticipants, new RemoteEndpointStore<>(), remoteSubscriptions);
@@ -84,7 +80,7 @@ public final class RtpsDataWriter<T> implements Closeable {
                 transport,
                 Set.of(RtpsEntity.USER_WRITER_NO_KEY),
                 this::handleNackFrag);
-        this.fragmentSender = new FragmentSender();
+        this.fragmentSender = new FragmentSender(FragmentSender.DEFAULT_FRAGMENT_SIZE, FragmentSender.DEFAULT_FRAGMENTATION_THRESHOLD, history::get);
         this.livelinessAsserter = new LivelinessAsserter(
                 endpoint.qos().liveliness(),
                 endpoint.qos().leaseDuration(),
@@ -94,10 +90,16 @@ public final class RtpsDataWriter<T> implements Closeable {
         this.announcer.start();
     }
 
-    public void write(T value) throws IOException {
-        long sequenceNumber = userSequence.getAndIncrement();
+    public synchronized void write(T value) throws IOException {
+        if (!running.get()) {
+            throw new IOException("writer is closed");
+        }
         byte[] payload = serializer.serialize(value);
-        history.put(sequenceNumber, payload);
+        long sequenceNumber = userSequence.get();
+        if (!history.tryPut(sequenceNumber, payload)) {
+            throw new IOException("writer history resource limit reached");
+        }
+        userSequence.incrementAndGet();
         sendUserData(sequenceNumber, payload);
         livelinessAsserter.onDataWritten();
     }
@@ -154,7 +156,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             return;
         }
         try {
-            fragmentSender.resendFragments(
+            boolean resent = fragmentSender.resendFragments(
                     guidPrefix,
                     nackFrag.readerId(),
                     RtpsEntity.USER_WRITER_NO_KEY,
@@ -167,6 +169,9 @@ public final class RtpsDataWriter<T> implements Closeable {
                             throw new UncheckedIOException(e);
                         }
                     });
+            if (!resent && history.get(nackFrag.writerSequenceNumber()).isEmpty()) {
+                sendGap(nackFrag.readerId(), nackFrag.writerSequenceNumber());
+            }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -278,7 +283,7 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         if (!running.compareAndSet(true, false)) {
             return;
         }
@@ -290,6 +295,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         first = closeOrCapture(ackNackListener, first);
         first = closeOrCapture(discoveryListener, first);
         first = closeOrCapture(transport, first);
+        history.clear();
         if (first != null) {
             throw first;
         }

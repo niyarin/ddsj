@@ -5,10 +5,10 @@ import ddsjdk.rtps.types.GuidPrefix;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Map;
+import java.util.function.LongFunction;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -24,7 +24,7 @@ public final class FragmentSender {
 
     private final int fragmentSize;
     private final int fragmentationThreshold;
-    private final Map<Long, FragmentedSample> fragmentedSamples = new ConcurrentHashMap<>();
+    private final LongFunction<Optional<byte[]>> payloadLookup;
     private final AtomicInteger heartbeatFragCount = new AtomicInteger(1);
 
     public FragmentSender() {
@@ -32,6 +32,12 @@ public final class FragmentSender {
     }
 
     public FragmentSender(int fragmentSize, int fragmentationThreshold) {
+        this(fragmentSize, fragmentationThreshold, ignored -> Optional.empty());
+    }
+
+    /** The lookup borrows samples from the writer history; this sender retains no payloads. */
+    public FragmentSender(int fragmentSize, int fragmentationThreshold, LongFunction<Optional<byte[]>> payloadLookup) {
+        this.payloadLookup = Objects.requireNonNull(payloadLookup);
         if (fragmentSize <= 0) {
             throw new IllegalArgumentException("fragmentSize must be positive");
         }
@@ -67,9 +73,6 @@ public final class FragmentSender {
         int sampleSize = payload.length;
         int totalFragments = (sampleSize + fragmentSize - 1) / fragmentSize;
 
-        // Store for potential retransmission
-        fragmentedSamples.put(sequenceNumber, new FragmentedSample(payload, totalFragments));
-
         // Send all fragments
         for (int fragNum = 1; fragNum <= totalFragments; fragNum++) {
             byte[] fragMessage = buildFragmentMessage(
@@ -92,7 +95,7 @@ public final class FragmentSender {
             Set<Integer> fragmentNumbers,
             Consumer<byte[]> sender) throws IOException {
 
-        FragmentedSample sample = fragmentedSamples.get(sequenceNumber);
+        FragmentedSample sample = lookup(sequenceNumber);
         if (sample == null) {
             return false;
         }
@@ -118,7 +121,7 @@ public final class FragmentSender {
             EntityId writerId,
             long sequenceNumber) {
 
-        FragmentedSample sample = fragmentedSamples.get(sequenceNumber);
+        FragmentedSample sample = lookup(sequenceNumber);
         if (sample == null) {
             return Optional.empty();
         }
@@ -130,24 +133,17 @@ public final class FragmentSender {
     }
 
     /**
-     * Removes a fragmented sample from cache (e.g., when fully acknowledged).
-     */
-    public void removeSample(long sequenceNumber) {
-        fragmentedSamples.remove(sequenceNumber);
-    }
-
-    /**
-     * Checks if a sequence number has a fragmented sample cached.
+     * Checks whether the supplied history retains a fragmented sample.
      */
     public boolean hasFragmentedSample(long sequenceNumber) {
-        return fragmentedSamples.containsKey(sequenceNumber);
+        return lookup(sequenceNumber) != null;
     }
 
     /**
-     * Returns the total number of fragments for a cached sample.
+     * Returns the total number of fragments for a sample retained in the supplied history.
      */
     public Optional<Integer> getTotalFragments(long sequenceNumber) {
-        FragmentedSample sample = fragmentedSamples.get(sequenceNumber);
+        FragmentedSample sample = lookup(sequenceNumber);
         return sample == null ? Optional.empty() : Optional.of(sample.totalFragments);
     }
 
@@ -184,9 +180,12 @@ public final class FragmentSender {
         return builder.bytes();
     }
 
-    private record FragmentedSample(byte[] payload, int totalFragments) {
-        FragmentedSample {
-            payload = payload.clone();
-        }
+    private FragmentedSample lookup(long sequenceNumber) {
+        return payloadLookup.apply(sequenceNumber)
+                .filter(this::requiresFragmentation)
+                .map(payload -> new FragmentedSample(payload, (payload.length + fragmentSize - 1) / fragmentSize))
+                .orElse(null);
     }
+
+    private record FragmentedSample(byte[] payload, int totalFragments) {}
 }

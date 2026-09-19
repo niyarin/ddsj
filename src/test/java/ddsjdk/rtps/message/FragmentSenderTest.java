@@ -12,6 +12,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FragmentSenderTest {
+    private final ddsjdk.rtps.history.WriterHistoryCache history = new ddsjdk.rtps.history.WriterHistoryCache(1);
 
     private static final GuidPrefix GUID_PREFIX = new GuidPrefix(new byte[]{
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
@@ -36,7 +37,7 @@ class FragmentSenderTest {
 
     @Test
     void sendFragmented_splitsIntoCorrectNumberOfFragments() throws Exception {
-        FragmentSender sender = new FragmentSender(100, 50); // fragment size 100, threshold 50
+        FragmentSender sender = new FragmentSender(100, 50, history::get); // fragment size 100, threshold 50
 
         byte[] payload = new byte[250]; // Should split into 3 fragments (100 + 100 + 50)
         for (int i = 0; i < payload.length; i++) {
@@ -44,6 +45,7 @@ class FragmentSenderTest {
         }
 
         List<byte[]> sentMessages = new ArrayList<>();
+        history.put(1L, payload);
         sender.sendFragmented(GUID_PREFIX, READER_ID, WRITER_ID, 1L, payload, sentMessages::add);
 
         assertEquals(3, sentMessages.size());
@@ -53,7 +55,7 @@ class FragmentSenderTest {
 
     @Test
     void sendFragmented_fragmentsCanBeReassembled() throws Exception {
-        FragmentSender sender = new FragmentSender(100, 50);
+        FragmentSender sender = new FragmentSender(100, 50, history::get);
         FragmentAssembler assembler = new FragmentAssembler();
 
         byte[] payload = new byte[250];
@@ -62,6 +64,7 @@ class FragmentSenderTest {
         }
 
         List<byte[]> sentMessages = new ArrayList<>();
+        history.put(1L, payload);
         sender.sendFragmented(GUID_PREFIX, READER_ID, WRITER_ID, 1L, payload, sentMessages::add);
 
         // Parse and reassemble the fragments
@@ -79,7 +82,7 @@ class FragmentSenderTest {
 
     @Test
     void resendFragments_resendsRequestedFragments() throws Exception {
-        FragmentSender sender = new FragmentSender(100, 50);
+        FragmentSender sender = new FragmentSender(100, 50, history::get);
 
         byte[] payload = new byte[250];
         for (int i = 0; i < payload.length; i++) {
@@ -87,6 +90,7 @@ class FragmentSenderTest {
         }
 
         // Send initial fragments
+        history.put(1L, payload);
         sender.sendFragmented(GUID_PREFIX, READER_ID, WRITER_ID, 1L, payload, msg -> {});
 
         // Request resend of fragment 2
@@ -120,9 +124,10 @@ class FragmentSenderTest {
 
     @Test
     void buildHeartbeatFrag_returnsMessageForCachedSample() throws Exception {
-        FragmentSender sender = new FragmentSender(100, 50);
+        FragmentSender sender = new FragmentSender(100, 50, history::get);
 
         byte[] payload = new byte[250];
+        history.put(1L, payload);
         sender.sendFragmented(GUID_PREFIX, READER_ID, WRITER_ID, 1L, payload, msg -> {});
 
         Optional<byte[]> heartbeatFrag = sender.buildHeartbeatFrag(
@@ -149,15 +154,18 @@ class FragmentSenderTest {
     }
 
     @Test
-    void removeSample_removesCachedSample() throws Exception {
-        FragmentSender sender = new FragmentSender(100, 50);
+    void writerHistoryEvictionRemovesFragmentRetransmission() throws Exception {
+        FragmentSender sender = new FragmentSender(100, 50, history::get);
 
         byte[] payload = new byte[250];
+        history.put(1L, payload);
         sender.sendFragmented(GUID_PREFIX, READER_ID, WRITER_ID, 1L, payload, msg -> {});
 
         assertTrue(sender.hasFragmentedSample(1L));
 
-        sender.removeSample(1L);
+        history.put(2L, new byte[250]);
+        assertFalse(sender.resendFragments(GUID_PREFIX, READER_ID, WRITER_ID, 1L, Set.of(1), message -> fail("evicted sample retransmitted")));
+        assertTrue(sender.buildHeartbeatFrag(GUID_PREFIX, READER_ID, WRITER_ID, 1L).isEmpty());
 
         assertFalse(sender.hasFragmentedSample(1L));
     }

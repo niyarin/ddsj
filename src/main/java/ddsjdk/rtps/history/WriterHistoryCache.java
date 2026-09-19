@@ -1,42 +1,56 @@
 package ddsjdk.rtps.history;
 
+import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.TreeMap;
+import java.util.Objects;
 
+/** Sole owner of serialized writer samples, including fragmented samples. */
 public final class WriterHistoryCache {
-    private static final int DEFAULT_MAX_SAMPLES = 128;
-
-    private final int maxSamples;
-    private final ConcurrentSkipListMap<Long, byte[]> samples = new ConcurrentSkipListMap<>();
+    private final int capacity;
+    private final HistoryKind kind;
+    private final TreeMap<Long, byte[]> samples = new TreeMap<>();
 
     public WriterHistoryCache() {
-        this(DEFAULT_MAX_SAMPLES);
+        this(128);
     }
-
     public WriterHistoryCache(int maxSamples) {
-        if (maxSamples <= 0) {
-            throw new IllegalArgumentException("maxSamples must be positive");
+        this(HistoryKind.KEEP_LAST, maxSamples, new ResourceLimits(maxSamples));
+    }
+    public WriterHistoryCache(HistoryKind kind, int depth, ResourceLimits limits) {
+        this.kind = Objects.requireNonNull(kind);
+        if (depth <= 0 || (kind == HistoryKind.KEEP_LAST && depth > limits.maxSamples())) {
+            throw new IllegalArgumentException("invalid history depth");
         }
-        this.maxSamples = maxSamples;
+        capacity = kind == HistoryKind.KEEP_LAST ? depth : limits.maxSamples();
     }
 
-    public void put(long sequenceNumber, byte[] serializedPayload) {
-        samples.put(sequenceNumber, serializedPayload.clone());
-        while (samples.size() > maxSamples) {
+    /** Rejects a new KEEP_ALL sample when full; existing samples are never evicted. */
+    public synchronized boolean tryPut(long sequenceNumber, byte[] payload) {
+        if (kind == HistoryKind.KEEP_ALL && samples.size() >= capacity && !samples.containsKey(sequenceNumber)) {
+            return false;
+        }
+        samples.put(sequenceNumber, payload.clone());
+        while (samples.size() > capacity) {
             samples.pollFirstEntry();
         }
+        return true;
     }
-
-    public Optional<byte[]> get(long sequenceNumber) {
-        byte[] payload = samples.get(sequenceNumber);
-        return payload == null ? Optional.empty() : Optional.of(payload.clone());
+    public void put(long sequenceNumber, byte[] payload) {
+        if (!tryPut(sequenceNumber, payload)) {
+            throw new IllegalStateException("writer history is full");
+        }
     }
-
-    public Optional<Long> firstSequenceNumber() {
+    public synchronized Optional<byte[]> get(long sequenceNumber) {
+        return Optional.ofNullable(samples.get(sequenceNumber)).map(byte[]::clone);
+    }
+    public synchronized Optional<Long> firstSequenceNumber() {
         return samples.isEmpty() ? Optional.empty() : Optional.of(samples.firstKey());
     }
-
-    public Optional<Long> lastSequenceNumber() {
+    public synchronized Optional<Long> lastSequenceNumber() {
         return samples.isEmpty() ? Optional.empty() : Optional.of(samples.lastKey());
+    }
+    public synchronized void clear() {
+        samples.clear();
     }
 }
