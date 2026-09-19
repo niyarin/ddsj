@@ -7,17 +7,24 @@ public record EndpointQos(
         DurabilityKind durability,
         HistoryKind history,
         int depth,
-        Duration deadline) {
+        Duration deadline,
+        OwnershipKind ownership,
+        int ownershipStrength) {
 
     /** Infinite deadline (no deadline checking) */
     public static final Duration DEADLINE_INFINITE = Duration.ofSeconds(Integer.MAX_VALUE);
+
+    /** Default ownership strength */
+    public static final int DEFAULT_OWNERSHIP_STRENGTH = 0;
 
     public static final EndpointQos DEFAULT = new EndpointQos(
             ReliabilityKind.BEST_EFFORT,
             DurabilityKind.VOLATILE,
             HistoryKind.KEEP_LAST,
             10,
-            DEADLINE_INFINITE);
+            DEADLINE_INFINITE,
+            OwnershipKind.SHARED,
+            DEFAULT_OWNERSHIP_STRENGTH);
 
     public EndpointQos {
         if (depth <= 0) {
@@ -29,11 +36,22 @@ public record EndpointQos(
         if (deadline.isNegative()) {
             throw new IllegalArgumentException("deadline must not be negative");
         }
+        if (ownership == null) {
+            ownership = OwnershipKind.SHARED;
+        }
+        if (ownershipStrength < 0) {
+            throw new IllegalArgumentException("ownership strength must not be negative");
+        }
     }
 
-    /** Constructor without deadline (uses infinite) */
+    /** Constructor without deadline and ownership (uses defaults) */
     public EndpointQos(ReliabilityKind reliability, DurabilityKind durability, HistoryKind history, int depth) {
-        this(reliability, durability, history, depth, DEADLINE_INFINITE);
+        this(reliability, durability, history, depth, DEADLINE_INFINITE, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH);
+    }
+
+    /** Constructor without ownership (uses defaults) */
+    public EndpointQos(ReliabilityKind reliability, DurabilityKind durability, HistoryKind history, int depth, Duration deadline) {
+        this(reliability, durability, history, depth, deadline, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH);
     }
 
     public boolean isCompatibleWithRequested(EndpointQos requested) {
@@ -45,6 +63,10 @@ public record EndpointQos(
         }
         // Deadline: offered must be <= requested (writer can provide data faster than reader requires)
         if (!deadlineCompatible(requested)) {
+            return false;
+        }
+        // Ownership: must be the same kind
+        if (ownership != requested.ownership) {
             return false;
         }
         return true;
@@ -91,5 +113,12 @@ public record EndpointQos(
     public enum HistoryKind {
         KEEP_LAST,
         KEEP_ALL
+    }
+
+    public enum OwnershipKind {
+        /** Multiple writers can update the same instance */
+        SHARED,
+        /** Only the highest-strength writer owns each instance */
+        EXCLUSIVE
     }
 }

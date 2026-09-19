@@ -2,6 +2,7 @@ package ddsjdk.rtps.discovery;
 
 import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
 import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
+import ddsjdk.rtps.discovery.EndpointQos.OwnershipKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.parameter.RtpsParameterList;
 import ddsjdk.rtps.parameter.RtpsParameterListWriter;
@@ -35,6 +36,9 @@ public final class RtpsQosParameters {
                 concat(
                         RtpsIo.intLe((int) qos.deadline().getSeconds()),
                         RtpsIo.intLe(qos.deadline().getNano())));
+        // Ownership
+        writer.int32Parameter(ParameterId.OWNERSHIP, rtpsKind(qos.ownership()));
+        writer.int32Parameter(ParameterId.OWNERSHIP_STRENGTH, qos.ownershipStrength());
     }
 
     public static EndpointQos read(RtpsParameterList parameters, boolean littleEndian) {
@@ -57,7 +61,13 @@ public final class RtpsQosParameters {
         Duration deadline = parameters.first(ParameterId.DEADLINE)
                 .flatMap(bytes -> readDeadline(bytes, littleEndian))
                 .orElse(defaults.deadline());
-        return new EndpointQos(reliability, durability, history, depth, deadline);
+        OwnershipKind ownership = parameters.first(ParameterId.OWNERSHIP)
+                .flatMap(bytes -> readOwnershipKind(bytes, littleEndian))
+                .orElse(defaults.ownership());
+        int ownershipStrength = parameters.first(ParameterId.OWNERSHIP_STRENGTH)
+                .map(bytes -> readOwnershipStrength(bytes, littleEndian))
+                .orElse(defaults.ownershipStrength());
+        return new EndpointQos(reliability, durability, history, depth, deadline, ownership, ownershipStrength);
     }
 
     private static int rtpsKind(ReliabilityKind reliability) {
@@ -133,6 +143,31 @@ public final class RtpsQosParameters {
             return Optional.of(EndpointQos.DEADLINE_INFINITE);
         }
         return Optional.of(Duration.ofSeconds(seconds, nanos));
+    }
+
+    private static int rtpsKind(OwnershipKind ownership) {
+        return switch (ownership) {
+            case SHARED -> 0;
+            case EXCLUSIVE -> 1;
+        };
+    }
+
+    private static Optional<OwnershipKind> readOwnershipKind(byte[] bytes, boolean littleEndian) {
+        if (bytes.length < 4) {
+            return Optional.empty();
+        }
+        return switch (RtpsIo.readInt(bytes, 0, littleEndian)) {
+            case 0 -> Optional.of(OwnershipKind.SHARED);
+            case 1 -> Optional.of(OwnershipKind.EXCLUSIVE);
+            default -> Optional.empty();
+        };
+    }
+
+    private static int readOwnershipStrength(byte[] bytes, boolean littleEndian) {
+        if (bytes.length < 4) {
+            return EndpointQos.DEFAULT_OWNERSHIP_STRENGTH;
+        }
+        return RtpsIo.readInt(bytes, 0, littleEndian);
     }
 
     private static byte[] concat(byte[]... parts) {

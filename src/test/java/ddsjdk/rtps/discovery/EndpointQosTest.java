@@ -2,6 +2,7 @@ package ddsjdk.rtps.discovery;
 
 import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
 import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
+import ddsjdk.rtps.discovery.EndpointQos.OwnershipKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import org.junit.jupiter.api.Test;
 
@@ -182,5 +183,91 @@ class EndpointQosTest {
                         DurabilityKind.VOLATILE,
                         HistoryKind.KEEP_LAST,
                         0));
+    }
+
+    @Test
+    void ownership_sameKind_compatible() {
+        var sharedWriter = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                OwnershipKind.SHARED,
+                0);
+        var sharedReader = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                OwnershipKind.SHARED,
+                0);
+
+        assertTrue(sharedWriter.isCompatibleWithRequested(sharedReader));
+    }
+
+    @Test
+    void ownership_exclusiveBoth_compatible() {
+        var exclusiveWriter = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                OwnershipKind.EXCLUSIVE,
+                100);
+        var exclusiveReader = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                OwnershipKind.EXCLUSIVE,
+                0);
+
+        assertTrue(exclusiveWriter.isCompatibleWithRequested(exclusiveReader));
+    }
+
+    @Test
+    void ownership_differentKinds_incompatible() {
+        var sharedWriter = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                OwnershipKind.SHARED,
+                0);
+        var exclusiveReader = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                OwnershipKind.EXCLUSIVE,
+                0);
+
+        assertFalse(sharedWriter.isCompatibleWithRequested(exclusiveReader));
+        assertFalse(exclusiveReader.isCompatibleWithRequested(sharedWriter));
+    }
+
+    @Test
+    void ownership_defaultIsShared() {
+        assertEquals(OwnershipKind.SHARED, EndpointQos.DEFAULT.ownership());
+        assertEquals(0, EndpointQos.DEFAULT.ownershipStrength());
+    }
+
+    @Test
+    void constructor_negativeOwnershipStrength_throws() {
+        assertThrows(IllegalArgumentException.class, () ->
+                new EndpointQos(
+                        ReliabilityKind.BEST_EFFORT,
+                        DurabilityKind.VOLATILE,
+                        HistoryKind.KEEP_LAST,
+                        10,
+                        EndpointQos.DEADLINE_INFINITE,
+                        OwnershipKind.EXCLUSIVE,
+                        -1));
     }
 }

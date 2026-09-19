@@ -21,6 +21,8 @@ public final class ParameterId {
     public static final int KEY_HASH = 0x0070;
     public static final int STATUS_INFO = 0x0071;
     public static final int DEADLINE = 0x0023;
+    public static final int OWNERSHIP = 0x001f;
+    public static final int OWNERSHIP_STRENGTH = 0x0006;
 
     private ParameterId() {
     }
