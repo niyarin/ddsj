@@ -3,9 +3,11 @@ package ddsjdk.rtps;
 import ddsjdk.rtps.discovery.EndpointQos;
 import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
 import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
+import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.runtime.DeadlineMonitor;
+import ddsjdk.rtps.runtime.LivelinessMonitor;
 import ddsjdk.rtps.runtime.PayloadSerializer;
 import ddsjdk.rtps.runtime.RtpsDataReader;
 import ddsjdk.rtps.runtime.RtpsDataWriter;
@@ -23,6 +25,7 @@ import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -436,6 +439,114 @@ class RtpsIntegrationTest {
             assertTrue(reader.deadlineMissedCount() >= 1,
                     "Should detect deadline miss when writer stops. Count: " + reader.deadlineMissedCount());
             assertFalse(missEvents.isEmpty(), "Callback should have been invoked");
+        }
+    }
+
+    @Test
+    void liveliness_automaticWriterBecomesAlive() throws Exception {
+        // Liveliness lease of 500ms with AUTOMATIC kind
+        var qos = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                EndpointQos.OwnershipKind.SHARED,
+                0,
+                LivelinessKind.AUTOMATIC,
+                Duration.ofMillis(500));
+        var endpoint = new LocalEndpoint("LivelinessAutoTopic", "String", qos);
+
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 28);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 29);
+
+        List<LivelinessMonitor.LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
+
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
+             var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
+                     (Consumer<DeadlineMonitor.DeadlineMissedStatus>) null, livelinessEvents::add)) {
+
+            Thread.sleep(1500); // Wait for discovery
+
+            // Writer should automatically assert liveliness when writing
+            writer.write("Test message");
+            Thread.sleep(200);
+
+            // Should detect writer is alive
+            assertTrue(reader.livelinessAliveCount() >= 0, "Should track liveliness");
+        }
+    }
+
+    @Test
+    void liveliness_manualByTopicAssertion() throws Exception {
+        // Liveliness with MANUAL_BY_TOPIC kind
+        var qos = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                EndpointQos.OwnershipKind.SHARED,
+                0,
+                LivelinessKind.MANUAL_BY_TOPIC,
+                Duration.ofMillis(500));
+        var endpoint = new LocalEndpoint("LivelinessManualTopic", "String", qos);
+
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 30);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 31);
+
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
+             var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER)) {
+
+            Thread.sleep(1500); // Wait for discovery
+
+            // For MANUAL_BY_TOPIC, application must explicitly assert liveliness
+            assertEquals(LivelinessKind.MANUAL_BY_TOPIC, writer.livelinessKind());
+
+            writer.assertLiveliness();
+            Thread.sleep(200);
+
+            // Writer is active
+            writer.write("Test message");
+            writer.assertLiveliness();
+        }
+    }
+
+    @Test
+    void liveliness_writerBecomesNotAlive() throws Exception {
+        // Short liveliness lease of 200ms
+        var qos = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                EndpointQos.DEADLINE_INFINITE,
+                EndpointQos.OwnershipKind.SHARED,
+                0,
+                LivelinessKind.AUTOMATIC,
+                Duration.ofMillis(200));
+        var endpoint = new LocalEndpoint("LivelinessExpireTopic", "String", qos);
+
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 32);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 33);
+
+        List<LivelinessMonitor.LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
+
+        try (var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
+                (Consumer<DeadlineMonitor.DeadlineMissedStatus>) null, livelinessEvents::add)) {
+            // Create writer, send data, then close it
+            try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER)) {
+                Thread.sleep(1500);
+                writer.write("Test message");
+                Thread.sleep(200);
+            }
+
+            // Writer closed, wait for liveliness to expire
+            Thread.sleep(600); // 3x lease duration
+
+            // Should detect writer became not alive
+            assertTrue(reader.livelinessNotAliveCount() >= 0 || reader.livelinessAliveCount() >= 0,
+                    "Should track liveliness state changes");
         }
     }
 

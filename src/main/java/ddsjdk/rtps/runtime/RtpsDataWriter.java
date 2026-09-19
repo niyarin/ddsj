@@ -1,6 +1,7 @@
 package ddsjdk.rtps.runtime;
 
 import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
+import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.discovery.RemoteParticipant;
@@ -54,6 +55,7 @@ public final class RtpsDataWriter<T> implements Closeable {
     private final AckNackListener ackNackListener;
     private final NackFragListener nackFragListener;
     private final FragmentSender fragmentSender;
+    private final LivelinessAsserter livelinessAsserter;
     private final Thread announcer;
 
     public RtpsDataWriter(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
@@ -83,6 +85,10 @@ public final class RtpsDataWriter<T> implements Closeable {
                 Set.of(RtpsEntity.USER_WRITER_NO_KEY),
                 this::handleNackFrag);
         this.fragmentSender = new FragmentSender();
+        this.livelinessAsserter = new LivelinessAsserter(
+                endpoint.qos().liveliness(),
+                endpoint.qos().leaseDuration(),
+                this::sendLivelinessHeartbeat);
         this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-writer-announcer-" + endpoint.topicName());
         this.announcer.setDaemon(true);
         this.announcer.start();
@@ -93,6 +99,22 @@ public final class RtpsDataWriter<T> implements Closeable {
         byte[] payload = serializer.serialize(value);
         history.put(sequenceNumber, payload);
         sendUserData(sequenceNumber, payload);
+        livelinessAsserter.onDataWritten();
+    }
+
+    /**
+     * Manually asserts liveliness. Required for MANUAL_BY_TOPIC liveliness kind.
+     * For AUTOMATIC kind, this is a no-op as liveliness is asserted automatically on write().
+     */
+    public void assertLiveliness() {
+        livelinessAsserter.assertLiveliness();
+    }
+
+    /**
+     * Returns the liveliness kind configured for this writer.
+     */
+    public LivelinessKind livelinessKind() {
+        return endpoint.qos().liveliness();
     }
 
     private void announceLoop() {
@@ -211,6 +233,14 @@ public final class RtpsDataWriter<T> implements Closeable {
         sendToUserLocators(message.bytes());
     }
 
+    private void sendLivelinessHeartbeat() {
+        try {
+            sendUserHeartbeat();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private void sendGap(EntityId readerId, long sequenceNumber) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.gap(readerId, RtpsEntity.USER_WRITER_NO_KEY, sequenceNumber);
@@ -253,6 +283,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             return;
         }
         announcer.interrupt();
+        livelinessAsserter.close();
         IOException first = null;
         first = closeOrCapture(() -> sedpPublicationAnnouncer.disposeAndUnregister(), first);
         first = closeOrCapture(nackFragListener, first);

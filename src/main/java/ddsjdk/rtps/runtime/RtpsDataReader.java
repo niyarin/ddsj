@@ -56,6 +56,7 @@ public final class RtpsDataReader<T> implements Closeable {
     private final AckNackListener ackNackListener;
     private final RtpsUserDataReader userDataReader;
     private final DeadlineMonitor deadlineMonitor;
+    private final LivelinessMonitor livelinessMonitor;
     private final Thread announcer;
 
     public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
@@ -84,6 +85,25 @@ public final class RtpsDataReader<T> implements Closeable {
             PayloadSerializer<T> serializer,
             RtpsTransport transport,
             Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed) throws IOException {
+        this(config, endpoint, serializer, transport, onDeadlineMissed, null);
+    }
+
+    public RtpsDataReader(
+            RtpsParticipantConfig config,
+            LocalEndpoint endpoint,
+            PayloadSerializer<T> serializer,
+            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+        this(config, endpoint, serializer, new UdpRtpsTransport(config), onDeadlineMissed, onLivelinessChanged);
+    }
+
+    public RtpsDataReader(
+            RtpsParticipantConfig config,
+            LocalEndpoint endpoint,
+            PayloadSerializer<T> serializer,
+            RtpsTransport transport,
+            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
         this.endpoint = endpoint;
         this.serializer = serializer;
         this.transport = transport;
@@ -107,6 +127,13 @@ public final class RtpsDataReader<T> implements Closeable {
             this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), onDeadlineMissed);
         } else {
             this.deadlineMonitor = null;
+        }
+
+        // Initialize liveliness monitor if lease duration is finite
+        if (endpoint.qos().hasFiniteLeaseDuration() && onLivelinessChanged != null) {
+            this.livelinessMonitor = new LivelinessMonitor(endpoint.qos().leaseDuration(), onLivelinessChanged);
+        } else {
+            this.livelinessMonitor = null;
         }
 
         this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-reader-announcer-" + endpoint.topicName());
@@ -151,6 +178,20 @@ public final class RtpsDataReader<T> implements Closeable {
         return deadlineMonitor != null ? deadlineMonitor.totalMissedCount() : 0;
     }
 
+    /**
+     * Returns the number of currently alive writers, or 0 if no liveliness monitoring is configured.
+     */
+    public long livelinessAliveCount() {
+        return livelinessMonitor != null ? livelinessMonitor.aliveCount() : 0;
+    }
+
+    /**
+     * Returns the number of writers that became not alive, or 0 if no liveliness monitoring is configured.
+     */
+    public long livelinessNotAliveCount() {
+        return livelinessMonitor != null ? livelinessMonitor.notAliveCount() : 0;
+    }
+
     private void announceLoop() {
         while (running.get()) {
             try {
@@ -180,6 +221,10 @@ public final class RtpsDataReader<T> implements Closeable {
             // Notify deadline monitor that data was received
             if (deadlineMonitor != null) {
                 deadlineMonitor.notifyActivity();
+            }
+            // Notify liveliness monitor that writer is alive
+            if (livelinessMonitor != null) {
+                livelinessMonitor.assertLiveliness(sample.writerGuid());
             }
         } catch (RuntimeException ignored) {
         }
@@ -249,6 +294,9 @@ public final class RtpsDataReader<T> implements Closeable {
         IOException first = null;
         if (deadlineMonitor != null) {
             deadlineMonitor.close();
+        }
+        if (livelinessMonitor != null) {
+            livelinessMonitor.close();
         }
         first = closeOrCapture(() -> sedpSubscriptionAnnouncer.disposeAndUnregister(), first);
         first = closeOrCapture(userDataReader, first);

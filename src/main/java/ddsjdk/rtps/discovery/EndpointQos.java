@@ -9,10 +9,15 @@ public record EndpointQos(
         int depth,
         Duration deadline,
         OwnershipKind ownership,
-        int ownershipStrength) {
+        int ownershipStrength,
+        LivelinessKind liveliness,
+        Duration leaseDuration) {
 
     /** Infinite deadline (no deadline checking) */
     public static final Duration DEADLINE_INFINITE = Duration.ofSeconds(Integer.MAX_VALUE);
+
+    /** Infinite lease duration (no liveliness checking) */
+    public static final Duration LEASE_DURATION_INFINITE = Duration.ofSeconds(Integer.MAX_VALUE);
 
     /** Default ownership strength */
     public static final int DEFAULT_OWNERSHIP_STRENGTH = 0;
@@ -24,7 +29,9 @@ public record EndpointQos(
             10,
             DEADLINE_INFINITE,
             OwnershipKind.SHARED,
-            DEFAULT_OWNERSHIP_STRENGTH);
+            DEFAULT_OWNERSHIP_STRENGTH,
+            LivelinessKind.AUTOMATIC,
+            LEASE_DURATION_INFINITE);
 
     public EndpointQos {
         if (depth <= 0) {
@@ -42,16 +49,41 @@ public record EndpointQos(
         if (ownershipStrength < 0) {
             throw new IllegalArgumentException("ownership strength must not be negative");
         }
+        if (liveliness == null) {
+            liveliness = LivelinessKind.AUTOMATIC;
+        }
+        if (leaseDuration == null) {
+            leaseDuration = LEASE_DURATION_INFINITE;
+        }
+        if (leaseDuration.isNegative()) {
+            throw new IllegalArgumentException("lease duration must not be negative");
+        }
     }
 
-    /** Constructor without deadline and ownership (uses defaults) */
+    /** Constructor without deadline, ownership, and liveliness (uses defaults) */
     public EndpointQos(ReliabilityKind reliability, DurabilityKind durability, HistoryKind history, int depth) {
-        this(reliability, durability, history, depth, DEADLINE_INFINITE, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH);
+        this(reliability, durability, history, depth, DEADLINE_INFINITE, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH,
+                LivelinessKind.AUTOMATIC, LEASE_DURATION_INFINITE);
     }
 
-    /** Constructor without ownership (uses defaults) */
+    /** Constructor without ownership and liveliness (uses defaults) */
     public EndpointQos(ReliabilityKind reliability, DurabilityKind durability, HistoryKind history, int depth, Duration deadline) {
-        this(reliability, durability, history, depth, deadline, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH);
+        this(reliability, durability, history, depth, deadline, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH,
+                LivelinessKind.AUTOMATIC, LEASE_DURATION_INFINITE);
+    }
+
+    /** Constructor with liveliness */
+    public EndpointQos(ReliabilityKind reliability, DurabilityKind durability, HistoryKind history, int depth,
+                       LivelinessKind liveliness, Duration leaseDuration) {
+        this(reliability, durability, history, depth, DEADLINE_INFINITE, OwnershipKind.SHARED, DEFAULT_OWNERSHIP_STRENGTH,
+                liveliness, leaseDuration);
+    }
+
+    /** Constructor with deadline and ownership (uses default liveliness) */
+    public EndpointQos(ReliabilityKind reliability, DurabilityKind durability, HistoryKind history, int depth,
+                       Duration deadline, OwnershipKind ownership, int ownershipStrength) {
+        this(reliability, durability, history, depth, deadline, ownership, ownershipStrength,
+                LivelinessKind.AUTOMATIC, LEASE_DURATION_INFINITE);
     }
 
     public boolean isCompatibleWithRequested(EndpointQos requested) {
@@ -67,6 +99,10 @@ public record EndpointQos(
         }
         // Ownership: must be the same kind
         if (ownership != requested.ownership) {
+            return false;
+        }
+        // Liveliness: offered kind must be >= requested kind, and offered lease must be <= requested lease
+        if (!livelinessCompatible(requested)) {
             return false;
         }
         return true;
@@ -100,6 +136,35 @@ public record EndpointQos(
         return !isInfiniteDeadline(deadline);
     }
 
+    public boolean hasFiniteLeaseDuration() {
+        return !isInfiniteDuration(leaseDuration);
+    }
+
+    private boolean livelinessCompatible(EndpointQos requested) {
+        // Offered liveliness kind must be >= requested (more strict is compatible)
+        // Ranking: AUTOMATIC < MANUAL_BY_PARTICIPANT < MANUAL_BY_TOPIC
+        if (livelinessRank(liveliness) < livelinessRank(requested.liveliness)) {
+            return false;
+        }
+        // If both have finite lease durations, offered must be <= requested
+        if (hasFiniteLeaseDuration() && requested.hasFiniteLeaseDuration()) {
+            return leaseDuration.compareTo(requested.leaseDuration) <= 0;
+        }
+        return true;
+    }
+
+    private static int livelinessRank(LivelinessKind kind) {
+        return switch (kind) {
+            case AUTOMATIC -> 0;
+            case MANUAL_BY_PARTICIPANT -> 1;
+            case MANUAL_BY_TOPIC -> 2;
+        };
+    }
+
+    private static boolean isInfiniteDuration(Duration d) {
+        return d.getSeconds() >= Integer.MAX_VALUE;
+    }
+
     public enum ReliabilityKind {
         BEST_EFFORT,
         RELIABLE
@@ -120,5 +185,14 @@ public record EndpointQos(
         SHARED,
         /** Only the highest-strength writer owns each instance */
         EXCLUSIVE
+    }
+
+    public enum LivelinessKind {
+        /** Service automatically maintains liveliness on any activity */
+        AUTOMATIC,
+        /** Application must assert liveliness at participant level */
+        MANUAL_BY_PARTICIPANT,
+        /** Application must assert liveliness for each DataWriter */
+        MANUAL_BY_TOPIC
     }
 }
