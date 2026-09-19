@@ -5,6 +5,7 @@ import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
 import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
+import ddsjdk.rtps.runtime.DeadlineMonitor;
 import ddsjdk.rtps.runtime.PayloadSerializer;
 import ddsjdk.rtps.runtime.RtpsDataReader;
 import ddsjdk.rtps.runtime.RtpsDataWriter;
@@ -19,7 +20,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -359,6 +362,80 @@ class RtpsIntegrationTest {
             byte[] received = reader.read(Duration.ofSeconds(5));
             assertNotNull(received, "Should receive large fragmented data");
             assertArrayEquals(largePayload, received);
+        }
+    }
+
+    @Test
+    void deadline_noMissWhenWriterSendsRegularly() throws Exception {
+        // Deadline of 500ms, writer sends every 200ms - should not miss
+        var qos = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                Duration.ofMillis(500));
+        var endpoint = new LocalEndpoint("DeadlineTestTopic", "String", qos);
+
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 24);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 25);
+
+        AtomicInteger missCount = new AtomicInteger(0);
+
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
+             var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
+                     status -> missCount.incrementAndGet())) {
+
+            Thread.sleep(1500); // Wait for discovery
+
+            // Send data regularly
+            for (int i = 0; i < 5; i++) {
+                writer.write("Message " + i);
+                Thread.sleep(200);
+            }
+
+            // Should have no deadline misses
+            assertEquals(0, missCount.get(), "Should have no deadline misses when writing regularly");
+            assertEquals(0, reader.deadlineMissedCount());
+        }
+    }
+
+    @Test
+    void deadline_missDetectedWhenWriterStops() throws Exception {
+        // Deadline of 200ms
+        var qos = new EndpointQos(
+                ReliabilityKind.BEST_EFFORT,
+                DurabilityKind.VOLATILE,
+                HistoryKind.KEEP_LAST,
+                10,
+                Duration.ofMillis(200));
+        var endpoint = new LocalEndpoint("DeadlineMissTestTopic", "String", qos);
+
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 26);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 27);
+
+        List<DeadlineMonitor.DeadlineMissedStatus> missEvents = new CopyOnWriteArrayList<>();
+
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
+             var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
+                     missEvents::add)) {
+
+            Thread.sleep(1500); // Wait for discovery
+
+            // Send one message to start the deadline timer
+            writer.write("Initial message");
+            Thread.sleep(100);
+
+            // Verify message received
+            String received = reader.read(Duration.ofMillis(200));
+            assertNotNull(received);
+
+            // Now stop writing and wait for deadline to expire
+            Thread.sleep(600); // 3x deadline period
+
+            // Should have detected deadline miss(es)
+            assertTrue(reader.deadlineMissedCount() >= 1,
+                    "Should detect deadline miss when writer stops. Count: " + reader.deadlineMissedCount());
+            assertFalse(missEvents.isEmpty(), "Callback should have been invoked");
         }
     }
 

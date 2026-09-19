@@ -8,6 +8,7 @@ import ddsjdk.rtps.parameter.RtpsParameterListWriter;
 import ddsjdk.rtps.protocol.ParameterId;
 import ddsjdk.rtps.util.RtpsIo;
 
+import java.time.Duration;
 import java.util.Optional;
 
 public final class RtpsQosParameters {
@@ -28,6 +29,12 @@ public final class RtpsQosParameters {
         writer.parameter(
                 ParameterId.HISTORY,
                 concat(RtpsIo.intLe(rtpsKind(qos.history())), RtpsIo.intLe(qos.depth())));
+        // Deadline: Duration as {seconds, nanoseconds fraction}
+        writer.parameter(
+                ParameterId.DEADLINE,
+                concat(
+                        RtpsIo.intLe((int) qos.deadline().getSeconds()),
+                        RtpsIo.intLe(qos.deadline().getNano())));
     }
 
     public static EndpointQos read(RtpsParameterList parameters, boolean littleEndian) {
@@ -47,7 +54,10 @@ public final class RtpsQosParameters {
         int depth = parameters.first(ParameterId.HISTORY)
                 .flatMap(bytes -> readHistoryDepth(bytes, littleEndian))
                 .orElse(defaults.depth());
-        return new EndpointQos(reliability, durability, history, depth);
+        Duration deadline = parameters.first(ParameterId.DEADLINE)
+                .flatMap(bytes -> readDeadline(bytes, littleEndian))
+                .orElse(defaults.deadline());
+        return new EndpointQos(reliability, durability, history, depth, deadline);
     }
 
     private static int rtpsKind(ReliabilityKind reliability) {
@@ -110,6 +120,19 @@ public final class RtpsQosParameters {
             case 1 -> Optional.of(DurabilityKind.TRANSIENT_LOCAL);
             default -> Optional.empty();
         };
+    }
+
+    private static Optional<Duration> readDeadline(byte[] bytes, boolean littleEndian) {
+        if (bytes.length < 8) {
+            return Optional.empty();
+        }
+        int seconds = RtpsIo.readInt(bytes, 0, littleEndian);
+        int nanos = RtpsIo.readInt(bytes, 4, littleEndian);
+        // Handle infinite deadline (0x7fffffff seconds)
+        if (seconds == Integer.MAX_VALUE) {
+            return Optional.of(EndpointQos.DEADLINE_INFINITE);
+        }
+        return Optional.of(Duration.ofSeconds(seconds, nanos));
     }
 
     private static byte[] concat(byte[]... parts) {

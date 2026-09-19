@@ -35,6 +35,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 public final class RtpsDataReader<T> implements Closeable {
     private static final long ANNOUNCE_INTERVAL_MILLIS = 1000L;
@@ -54,17 +55,35 @@ public final class RtpsDataReader<T> implements Closeable {
     private final SpdpDiscoveryListener discoveryListener;
     private final AckNackListener ackNackListener;
     private final RtpsUserDataReader userDataReader;
+    private final DeadlineMonitor deadlineMonitor;
     private final Thread announcer;
 
     public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
-        this(config, endpoint, serializer, new UdpRtpsTransport(config));
+        this(config, endpoint, serializer, new UdpRtpsTransport(config), null);
     }
 
     public RtpsDataReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
         this(new RtpsParticipantConfig(0), endpoint, serializer);
     }
 
+    public RtpsDataReader(
+            RtpsParticipantConfig config,
+            LocalEndpoint endpoint,
+            PayloadSerializer<T> serializer,
+            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed) throws IOException {
+        this(config, endpoint, serializer, new UdpRtpsTransport(config), onDeadlineMissed);
+    }
+
     public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer, RtpsTransport transport) throws IOException {
+        this(config, endpoint, serializer, transport, null);
+    }
+
+    public RtpsDataReader(
+            RtpsParticipantConfig config,
+            LocalEndpoint endpoint,
+            PayloadSerializer<T> serializer,
+            RtpsTransport transport,
+            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed) throws IOException {
         this.endpoint = endpoint;
         this.serializer = serializer;
         this.transport = transport;
@@ -82,6 +101,14 @@ public final class RtpsDataReader<T> implements Closeable {
                     }
                 });
         this.userDataReader = new RtpsUserDataReader(transport, RtpsEntity.USER_READER_NO_KEY, this::onSample, this::onHeartbeat);
+
+        // Initialize deadline monitor if deadline is finite
+        if (endpoint.qos().hasFiniteDeadline() && onDeadlineMissed != null) {
+            this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), onDeadlineMissed);
+        } else {
+            this.deadlineMonitor = null;
+        }
+
         this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-reader-announcer-" + endpoint.topicName());
         this.announcer.setDaemon(true);
         this.announcer.start();
@@ -117,6 +144,13 @@ public final class RtpsDataReader<T> implements Closeable {
         return read(Duration.ofMillis(100));
     }
 
+    /**
+     * Returns the total number of deadline misses, or 0 if no deadline is configured.
+     */
+    public long deadlineMissedCount() {
+        return deadlineMonitor != null ? deadlineMonitor.totalMissedCount() : 0;
+    }
+
     private void announceLoop() {
         while (running.get()) {
             try {
@@ -143,6 +177,10 @@ public final class RtpsDataReader<T> implements Closeable {
         }
         try {
             messages.add(serializer.deserialize(sample.payload()));
+            // Notify deadline monitor that data was received
+            if (deadlineMonitor != null) {
+                deadlineMonitor.notifyActivity();
+            }
         } catch (RuntimeException ignored) {
         }
     }
@@ -209,6 +247,9 @@ public final class RtpsDataReader<T> implements Closeable {
         }
         announcer.interrupt();
         IOException first = null;
+        if (deadlineMonitor != null) {
+            deadlineMonitor.close();
+        }
         first = closeOrCapture(() -> sedpSubscriptionAnnouncer.disposeAndUnregister(), first);
         first = closeOrCapture(userDataReader, first);
         first = closeOrCapture(ackNackListener, first);
