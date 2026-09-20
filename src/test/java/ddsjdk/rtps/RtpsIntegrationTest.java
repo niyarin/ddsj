@@ -11,6 +11,7 @@ import ddsjdk.rtps.runtime.LivelinessMonitor;
 import ddsjdk.rtps.runtime.PayloadSerializer;
 import ddsjdk.rtps.runtime.RtpsDataReader;
 import ddsjdk.rtps.runtime.RtpsDataWriter;
+import ddsjdk.rtps.runtime.RtpsParticipant;
 import ddsjdk.rtps.transport.RtpsParticipantConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -547,6 +548,52 @@ class RtpsIntegrationTest {
             // Should detect writer became not alive
             assertTrue(reader.livelinessNotAliveCount() >= 0 || reader.livelinessAliveCount() >= 0,
                     "Should track liveliness state changes");
+        }
+    }
+
+    private static final PayloadSerializer<byte[]> BYTE_ARRAY_SERIALIZER = new PayloadSerializer<>() {
+        public byte[] serialize(byte[] value) { return value; }
+        public byte[] deserialize(byte[] value) { return value; }
+    };
+
+    @Test
+    void multipleEndpointsCommunicateWithinOneParticipantOverUdp() throws Exception {
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(71))) {
+            var topic = new LocalEndpoint("local", "bytes", EndpointQos.DEFAULT);
+            var writer = participant.createWriter(topic, BYTE_ARRAY_SERIALIZER);
+            var reader1 = participant.createReader(topic, BYTE_ARRAY_SERIALIZER);
+            var reader2 = participant.createReader(topic, BYTE_ARRAY_SERIALIZER);
+            var otherReader = participant.createReader(new LocalEndpoint("other", "bytes", EndpointQos.DEFAULT), BYTE_ARRAY_SERIALIZER);
+            writer.write(new byte[]{1, 2, 3});
+            assertArrayEquals(new byte[]{1, 2, 3}, reader1.poll(Duration.ofSeconds(3)).orElseThrow());
+            assertArrayEquals(new byte[]{1, 2, 3}, reader2.poll(Duration.ofSeconds(3)).orElseThrow());
+            assertTrue(otherReader.poll(Duration.ofMillis(100)).isEmpty());
+            reader1.close();
+            writer.write(new byte[]{4});
+            assertArrayEquals(new byte[]{4}, reader2.poll(Duration.ofSeconds(3)).orElseThrow());
+        }
+    }
+
+    @Test
+    void discoveryMatchesMultipleEndpointsAcrossParticipantsOverUdp() throws Exception {
+        var config = new RtpsParticipantConfig(72);
+        var peerConfig = new RtpsParticipantConfig(72, config.multicastGroup(), Optional.empty(), 1);
+        try (var publisher = new RtpsParticipant(config);
+             var subscriber = new RtpsParticipant(peerConfig)) {
+            // Reliable delivery retries samples written before discovery completes.
+            var qos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+            var one = new LocalEndpoint("one", "bytes", qos);
+            var two = new LocalEndpoint("two", "bytes", qos);
+            var writer1 = publisher.createWriter(one, BYTE_ARRAY_SERIALIZER);
+            var writer2 = publisher.createWriter(two, BYTE_ARRAY_SERIALIZER);
+            var reader1 = subscriber.createReader(one, BYTE_ARRAY_SERIALIZER);
+            var reader2 = subscriber.createReader(two, BYTE_ARRAY_SERIALIZER);
+            writer1.write(new byte[]{1});
+            writer2.write(new byte[]{2});
+            assertArrayEquals(new byte[]{1}, reader1.poll(Duration.ofSeconds(3)).orElseThrow());
+            assertArrayEquals(new byte[]{2}, reader2.poll(Duration.ofSeconds(3)).orElseThrow());
+            assertTrue(reader1.poll(Duration.ofMillis(100)).isEmpty());
+            assertTrue(reader2.poll(Duration.ofMillis(100)).isEmpty());
         }
     }
 

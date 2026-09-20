@@ -7,9 +7,6 @@ import ddsjdk.rtps.discovery.RemoteParticipant;
 import ddsjdk.rtps.discovery.RemoteParticipantStore;
 import ddsjdk.rtps.discovery.RemoteEndpointStore;
 import ddsjdk.rtps.discovery.RemoteSubscription;
-import ddsjdk.rtps.discovery.SedpPublicationAnnouncer;
-import ddsjdk.rtps.discovery.SpdpAnnouncer;
-import ddsjdk.rtps.discovery.SpdpDiscoveryListener;
 import ddsjdk.rtps.history.WriterHistoryCache;
 import ddsjdk.rtps.message.AckNack;
 import ddsjdk.rtps.message.AckNackListener;
@@ -20,44 +17,44 @@ import ddsjdk.rtps.message.RtpsMessageBuilder;
 import ddsjdk.rtps.protocol.RtpsEntity;
 import ddsjdk.rtps.transport.RtpsParticipantConfig;
 import ddsjdk.rtps.transport.RtpsTransport;
-import ddsjdk.rtps.transport.UdpRtpsTransport;
+import ddsjdk.rtps.types.Guid;
 import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.GuidPrefix;
-import ddsjdk.rtps.types.RtpsGuid;
 import ddsjdk.rtps.types.RtpsTimestamp;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class RtpsDataWriter<T> implements Closeable {
-    private static final long ANNOUNCE_INTERVAL_MILLIS = 1000L;
 
     private final LocalEndpoint endpoint;
     private final PayloadSerializer<T> serializer;
     private final RtpsTransport transport;
-    private final GuidPrefix guidPrefix = RtpsGuid.newGuidPrefix();
-    private final AtomicBoolean running = new AtomicBoolean(true);
+    private final RtpsParticipant participant;
+    private final boolean ownsParticipant;
+    private final EntityId entityId;
+    private final GuidPrefix guidPrefix;
+    private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong userSequence = new AtomicLong(1);
     private final AtomicLong userHeartbeatCount = new AtomicLong(1);
     private final WriterHistoryCache history;
-    private final RemoteParticipantStore remoteParticipants = new RemoteParticipantStore();
-    private final RemoteEndpointStore<RemoteSubscription> remoteSubscriptions = new RemoteEndpointStore<>();
-    private final SpdpAnnouncer spdpAnnouncer;
-    private final SedpPublicationAnnouncer sedpPublicationAnnouncer;
-    private final SpdpDiscoveryListener discoveryListener;
+    private final RemoteParticipantStore remoteParticipants;
+    private final RemoteEndpointStore<RemoteSubscription> remoteSubscriptions;
     private final AckNackListener ackNackListener;
     private final NackFragListener nackFragListener;
     private final FragmentSender fragmentSender;
     private final LivelinessAsserter livelinessAsserter;
-    private final Thread announcer;
 
     public RtpsDataWriter(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
-        this(config, endpoint, serializer, new UdpRtpsTransport(config));
+        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true);
     }
 
     public RtpsDataWriter(LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
@@ -65,29 +62,47 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     public RtpsDataWriter(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer, RtpsTransport transport) throws IOException {
-        this.endpoint = endpoint;
-        this.serializer = serializer;
-        this.transport = transport;
-        this.history = new WriterHistoryCache(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
-        this.spdpAnnouncer = new SpdpAnnouncer(config, transport, guidPrefix);
-        this.sedpPublicationAnnouncer = new SedpPublicationAnnouncer(endpoint, transport, guidPrefix, remoteParticipants);
-        this.discoveryListener = new SpdpDiscoveryListener(transport, guidPrefix, remoteParticipants, new RemoteEndpointStore<>(), remoteSubscriptions);
-        this.ackNackListener = new AckNackListener(
-                transport,
-                Set.of(RtpsEntity.USER_WRITER_NO_KEY, RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER),
-                this::handleAckNack);
-        this.nackFragListener = new NackFragListener(
-                transport,
-                Set.of(RtpsEntity.USER_WRITER_NO_KEY),
-                this::handleNackFrag);
-        this.fragmentSender = new FragmentSender(FragmentSender.DEFAULT_FRAGMENT_SIZE, FragmentSender.DEFAULT_FRAGMENTATION_THRESHOLD, history::get);
-        this.livelinessAsserter = new LivelinessAsserter(
-                endpoint.qos().liveliness(),
-                endpoint.qos().leaseDuration(),
-                this::sendLivelinessHeartbeat);
-        this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-writer-announcer-" + endpoint.topicName());
-        this.announcer.setDaemon(true);
-        this.announcer.start();
+        this(RtpsParticipant.owned(config, endpoint, serializer, transport), endpoint, serializer, true);
+    }
+
+    RtpsDataWriter(RtpsParticipant participant, LocalEndpoint endpoint, PayloadSerializer<T> serializer, boolean ownsParticipant) throws IOException {
+        Objects.requireNonNull(endpoint, "endpoint");
+        Objects.requireNonNull(serializer, "serializer");
+        this.participant = participant;
+        this.ownsParticipant = ownsParticipant;
+        List<Closeable> opened = new ArrayList<>();
+        if (ownsParticipant) opened.add(participant);
+        try {
+            this.entityId = participant.allocateEntityId(true);
+            this.guidPrefix = participant.guidPrefix();
+            this.remoteParticipants = participant.remoteParticipants();
+            this.remoteSubscriptions = participant.subscriptions();
+            this.endpoint = endpoint;
+            this.serializer = serializer;
+            this.transport = participant.transport();
+            this.history = new WriterHistoryCache(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
+            this.ackNackListener = new AckNackListener(
+                    transport,
+                    Set.of(entityId),
+                    this::handleAckNack);
+            opened.add(ackNackListener);
+            this.nackFragListener = new NackFragListener(
+                    transport,
+                    Set.of(entityId),
+                    this::handleNackFrag);
+            opened.add(nackFragListener);
+            this.fragmentSender = new FragmentSender(FragmentSender.DEFAULT_FRAGMENT_SIZE, FragmentSender.DEFAULT_FRAGMENTATION_THRESHOLD, history::get);
+            this.livelinessAsserter = new LivelinessAsserter(
+                    endpoint.qos().liveliness(),
+                    endpoint.qos().leaseDuration(),
+                    this::sendLivelinessHeartbeat);
+            opened.add(livelinessAsserter);
+            participant.register(guid(), endpoint, this, true);
+            running.set(true);
+        } catch (IOException | RuntimeException e) {
+            RtpsParticipant.cleanupInitialization(e, opened);
+            throw e;
+        }
     }
 
     public synchronized void write(T value) throws IOException {
@@ -119,39 +134,23 @@ public final class RtpsDataWriter<T> implements Closeable {
         return endpoint.qos().liveliness();
     }
 
-    private void announceLoop() {
-        while (running.get()) {
-            try {
-                spdpAnnouncer.announce();
-                sedpPublicationAnnouncer.announce();
-                if (endpoint.qos().reliability() == ReliabilityKind.RELIABLE) {
-                    sendUserHeartbeat();
-                }
-                Thread.sleep(ANNOUNCE_INTERVAL_MILLIS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            } catch (IOException e) {
-                if (running.get()) {
-                    throw new UncheckedIOException(e);
-                }
-            }
-        }
+    synchronized void announceHeartbeat() throws IOException {
+        if (running.get() && endpoint.qos().reliability() == ReliabilityKind.RELIABLE) sendUserHeartbeat();
     }
 
-    private void handleAckNack(AckNack ackNack) {
+    private synchronized void handleAckNack(AckNack ackNack) {
+        if (!running.get()) return;
         try {
-            if (ackNack.writerId().equals(RtpsEntity.USER_WRITER_NO_KEY)) {
+            if (ackNack.writerId().equals(entityId)) {
                 resendRequestedSamples(ackNack);
-            } else if (ackNack.writerId().equals(RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER)) {
-                sedpPublicationAnnouncer.respondTo(ackNack);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
-    private void handleNackFrag(NackFrag nackFrag) {
+    private synchronized void handleNackFrag(NackFrag nackFrag) {
+        if (!running.get()) return;
         if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
             return;
         }
@@ -159,7 +158,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             boolean resent = fragmentSender.resendFragments(
                     guidPrefix,
                     nackFrag.readerId(),
-                    RtpsEntity.USER_WRITER_NO_KEY,
+                    entityId,
                     nackFrag.writerSequenceNumber(),
                     nackFrag.requestedFragmentNumbers(),
                     msg -> {
@@ -202,15 +201,15 @@ public final class RtpsDataWriter<T> implements Closeable {
     private void sendUserDataComplete(long sequenceNumber, byte[] payload) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.infoTs(RtpsTimestamp.now());
-        message.data(RtpsEntity.USER_READER_NO_KEY, RtpsEntity.USER_WRITER_NO_KEY, sequenceNumber, payload);
+        message.data(RtpsEntity.UNKNOWN, entityId, sequenceNumber, payload);
         sendToUserLocators(message.bytes());
     }
 
     private void sendUserDataFragmented(long sequenceNumber, byte[] payload) throws IOException {
         fragmentSender.sendFragmented(
                 guidPrefix,
-                RtpsEntity.USER_READER_NO_KEY,
-                RtpsEntity.USER_WRITER_NO_KEY,
+                RtpsEntity.UNKNOWN,
+                entityId,
                 sequenceNumber,
                 payload,
                 msg -> {
@@ -230,15 +229,16 @@ public final class RtpsDataWriter<T> implements Closeable {
         }
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.heartbeat(
-                RtpsEntity.USER_READER_NO_KEY,
-                RtpsEntity.USER_WRITER_NO_KEY,
+                RtpsEntity.UNKNOWN,
+                entityId,
                 firstSequenceNumber.get(),
                 lastSequenceNumber.get(),
                 (int) userHeartbeatCount.getAndIncrement());
         sendToUserLocators(message.bytes());
     }
 
-    private void sendLivelinessHeartbeat() {
+    private synchronized void sendLivelinessHeartbeat() {
+        if (!running.get()) return;
         try {
             sendUserHeartbeat();
         } catch (IOException e) {
@@ -248,7 +248,7 @@ public final class RtpsDataWriter<T> implements Closeable {
 
     private void sendGap(EntityId readerId, long sequenceNumber) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
-        message.gap(readerId, RtpsEntity.USER_WRITER_NO_KEY, sequenceNumber);
+        message.gap(readerId, entityId, sequenceNumber);
         sendToUserLocators(message.bytes());
     }
 
@@ -282,19 +282,20 @@ public final class RtpsDataWriter<T> implements Closeable {
         return result;
     }
 
+    /** Identity allocated by the owning participant. */
+    public Guid guid() { return guidPrefix.toGuid(entityId); }
+
     @Override
     public synchronized void close() throws IOException {
         if (!running.compareAndSet(true, false)) {
             return;
         }
-        announcer.interrupt();
         livelinessAsserter.close();
         IOException first = null;
-        first = closeOrCapture(() -> sedpPublicationAnnouncer.disposeAndUnregister(), first);
+        first = closeOrCapture(() -> participant.unregister(guid(), true), first);
         first = closeOrCapture(nackFragListener, first);
         first = closeOrCapture(ackNackListener, first);
-        first = closeOrCapture(discoveryListener, first);
-        first = closeOrCapture(transport, first);
+        if (ownsParticipant) first = closeOrCapture(participant, first);
         history.clear();
         if (first != null) {
             throw first;

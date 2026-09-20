@@ -3,6 +3,7 @@ package ddsjdk.rtps.protocol;
 import ddsjdk.rtps.types.EntityId;
 
 public final class RtpsEntity {
+    public static final EntityId UNKNOWN = entity(0, 0, 0, 0);
     public static final EntityId PARTICIPANT_BUILTIN_TOPIC_READER = entity(0x00, 0x01, 0x00, 0xc7);
     public static final EntityId PARTICIPANT_BUILTIN_TOPIC_WRITER = entity(0x00, 0x01, 0x00, 0xc2);
     public static final EntityId PUBLICATIONS_BUILTIN_TOPIC_READER = entity(0x00, 0x00, 0x03, 0xc7);

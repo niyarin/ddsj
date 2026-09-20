@@ -6,23 +6,17 @@ import ddsjdk.rtps.discovery.RemoteParticipant;
 import ddsjdk.rtps.discovery.RemoteParticipantStore;
 import ddsjdk.rtps.discovery.RemoteEndpointStore;
 import ddsjdk.rtps.discovery.RemotePublication;
-import ddsjdk.rtps.discovery.SedpSubscriptionAnnouncer;
-import ddsjdk.rtps.discovery.SpdpAnnouncer;
-import ddsjdk.rtps.discovery.SpdpDiscoveryListener;
 import ddsjdk.rtps.history.ReaderHistoryCache;
 import ddsjdk.rtps.history.ReaderSampleQueue;
-import ddsjdk.rtps.message.AckNackListener;
 import ddsjdk.rtps.message.Heartbeat;
 import ddsjdk.rtps.message.RtpsMessageBuilder;
 import ddsjdk.rtps.message.RtpsUserDataReader;
 import ddsjdk.rtps.message.UserDataSample;
-import ddsjdk.rtps.protocol.RtpsEntity;
 import ddsjdk.rtps.transport.RtpsParticipantConfig;
 import ddsjdk.rtps.transport.RtpsTransport;
-import ddsjdk.rtps.transport.UdpRtpsTransport;
+import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.Guid;
 import ddsjdk.rtps.types.GuidPrefix;
-import ddsjdk.rtps.types.RtpsGuid;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -39,13 +33,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public final class RtpsDataReader<T> implements Closeable {
-    private static final long ANNOUNCE_INTERVAL_MILLIS = 1000L;
 
     private final LocalEndpoint endpoint;
     private final PayloadSerializer<T> serializer;
     private final RtpsTransport transport;
-    private final GuidPrefix guidPrefix = RtpsGuid.newGuidPrefix();
-    private final AtomicBoolean running = new AtomicBoolean(true);
+    private final RtpsParticipant participant;
+    private final boolean ownsParticipant;
+    private final EntityId entityId;
+    private final GuidPrefix guidPrefix;
+    private final AtomicBoolean running = new AtomicBoolean(false);
     private final ReaderSampleQueue<T> messages;
     private final AtomicLong sampleRejectedCount = new AtomicLong();
     private final AtomicLong deserializationErrorCount = new AtomicLong();
@@ -53,19 +49,14 @@ public final class RtpsDataReader<T> implements Closeable {
     private volatile Consumer<DeserializationError> onDeserializationError = ignored -> { };
     private final ReaderHistoryCache history = new ReaderHistoryCache();
     private final AtomicLong ackNackCount = new AtomicLong(1);
-    private final RemoteParticipantStore remoteParticipants = new RemoteParticipantStore();
-    private final RemoteEndpointStore<RemotePublication> remotePublications = new RemoteEndpointStore<>();
-    private final SpdpAnnouncer spdpAnnouncer;
-    private final SedpSubscriptionAnnouncer sedpSubscriptionAnnouncer;
-    private final SpdpDiscoveryListener discoveryListener;
-    private final AckNackListener ackNackListener;
+    private final RemoteParticipantStore remoteParticipants;
+    private final RemoteEndpointStore<RemotePublication> remotePublications;
     private final RtpsUserDataReader userDataReader;
     private final DeadlineMonitor deadlineMonitor;
     private final LivelinessMonitor livelinessMonitor;
-    private final Thread announcer;
 
     public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
-        this(config, endpoint, serializer, new UdpRtpsTransport(config), null);
+        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, null, null);
     }
 
     public RtpsDataReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
@@ -77,7 +68,7 @@ public final class RtpsDataReader<T> implements Closeable {
             LocalEndpoint endpoint,
             PayloadSerializer<T> serializer,
             Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed) throws IOException {
-        this(config, endpoint, serializer, new UdpRtpsTransport(config), onDeadlineMissed);
+        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, onDeadlineMissed, null);
     }
 
     public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer, RtpsTransport transport) throws IOException {
@@ -99,7 +90,7 @@ public final class RtpsDataReader<T> implements Closeable {
             PayloadSerializer<T> serializer,
             Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
             Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
-        this(config, endpoint, serializer, new UdpRtpsTransport(config), onDeadlineMissed, onLivelinessChanged);
+        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, onDeadlineMissed, onLivelinessChanged);
     }
 
     public RtpsDataReader(
@@ -109,42 +100,52 @@ public final class RtpsDataReader<T> implements Closeable {
             RtpsTransport transport,
             Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
             Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
-        this.endpoint = endpoint;
-        this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
-        this.serializer = serializer;
-        this.transport = transport;
-        this.spdpAnnouncer = new SpdpAnnouncer(config, transport, guidPrefix);
-        this.sedpSubscriptionAnnouncer = new SedpSubscriptionAnnouncer(endpoint, transport, guidPrefix, remoteParticipants);
-        this.discoveryListener = new SpdpDiscoveryListener(transport, guidPrefix, remoteParticipants, remotePublications, new RemoteEndpointStore<>());
-        this.ackNackListener = new AckNackListener(
-                transport,
-                Set.of(RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_WRITER),
-                ackNack -> {
-                    try {
-                        sedpSubscriptionAnnouncer.respondTo(ackNack);
-                    } catch (IOException e) {
-                        throw new UncheckedIOException(e);
-                    }
-                });
-        this.userDataReader = new RtpsUserDataReader(transport, RtpsEntity.USER_READER_NO_KEY, this::onSample, this::onHeartbeat);
+        this(RtpsParticipant.owned(config, endpoint, serializer, transport), endpoint, serializer, true, onDeadlineMissed, onLivelinessChanged);
+    }
 
-        // Initialize deadline monitor if deadline is finite
-        if (endpoint.qos().hasFiniteDeadline() && onDeadlineMissed != null) {
-            this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), onDeadlineMissed);
-        } else {
-            this.deadlineMonitor = null;
+    RtpsDataReader(RtpsParticipant participant, LocalEndpoint endpoint, PayloadSerializer<T> serializer, boolean ownsParticipant,
+            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+        Objects.requireNonNull(endpoint, "endpoint");
+        Objects.requireNonNull(serializer, "serializer");
+        this.participant = participant;
+        this.ownsParticipant = ownsParticipant;
+        List<Closeable> opened = new ArrayList<>();
+        if (ownsParticipant) opened.add(participant);
+        try {
+            this.entityId = participant.allocateEntityId(false);
+            this.guidPrefix = participant.guidPrefix();
+            this.remoteParticipants = participant.remoteParticipants();
+            this.remotePublications = participant.publications();
+            this.endpoint = endpoint;
+            this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
+            this.serializer = serializer;
+            this.transport = participant.transport();
+            this.userDataReader = new RtpsUserDataReader(transport, entityId, this::onSample, this::onHeartbeat);
+            opened.add(userDataReader);
+
+            // Initialize deadline monitor if deadline is finite
+            if (endpoint.qos().hasFiniteDeadline() && onDeadlineMissed != null) {
+                this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), onDeadlineMissed);
+                opened.add(deadlineMonitor);
+            } else {
+                this.deadlineMonitor = null;
+            }
+
+            // Initialize liveliness monitor if lease duration is finite
+            if (endpoint.qos().hasFiniteLeaseDuration() && onLivelinessChanged != null) {
+                this.livelinessMonitor = new LivelinessMonitor(endpoint.qos().leaseDuration(), onLivelinessChanged);
+                opened.add(livelinessMonitor);
+            } else {
+                this.livelinessMonitor = null;
+            }
+
+            participant.register(guid(), endpoint, this, false);
+            running.set(true);
+        } catch (IOException | RuntimeException e) {
+            RtpsParticipant.cleanupInitialization(e, opened);
+            throw e;
         }
-
-        // Initialize liveliness monitor if lease duration is finite
-        if (endpoint.qos().hasFiniteLeaseDuration() && onLivelinessChanged != null) {
-            this.livelinessMonitor = new LivelinessMonitor(endpoint.qos().leaseDuration(), onLivelinessChanged);
-        } else {
-            this.livelinessMonitor = null;
-        }
-
-        this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-reader-announcer-" + endpoint.topicName());
-        this.announcer.setDaemon(true);
-        this.announcer.start();
     }
 
     /** Number of deliveries rejected because KEEP_ALL unread history was full. */
@@ -289,23 +290,6 @@ public final class RtpsDataReader<T> implements Closeable {
         return livelinessMonitor != null ? livelinessMonitor.notAliveCount() : 0;
     }
 
-    private void announceLoop() {
-        while (running.get()) {
-            try {
-                spdpAnnouncer.announce();
-                sedpSubscriptionAnnouncer.announce();
-                Thread.sleep(ANNOUNCE_INTERVAL_MILLIS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            } catch (IOException e) {
-                if (running.get()) {
-                    throw new UncheckedIOException(e);
-                }
-            }
-        }
-    }
-
     private synchronized void onSample(UserDataSample sample) {
         if (!running.get()) {
             return;
@@ -345,7 +329,8 @@ public final class RtpsDataReader<T> implements Closeable {
         }
     }
 
-    private void onHeartbeat(Heartbeat heartbeat) {
+    private synchronized void onHeartbeat(Heartbeat heartbeat) {
+        if (!running.get()) return;
         if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
             return;
         }
@@ -363,7 +348,7 @@ public final class RtpsDataReader<T> implements Closeable {
     private void sendAckNack(Guid writerGuid, long baseSequenceNumber, Set<Long> missingSequenceNumbers) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.ackNack(
-                RtpsEntity.USER_READER_NO_KEY,
+                entityId,
                 writerGuid.entityId(),
                 baseSequenceNumber,
                 missingSequenceNumbers,
@@ -379,7 +364,7 @@ public final class RtpsDataReader<T> implements Closeable {
     private boolean isMatchedOrUndiscoveredPublication(Guid writerGuid) {
         var publication = remotePublications.get(writerGuid);
         if (publication.isEmpty()) {
-            return true;
+            return ownsParticipant;
         }
         RemotePublication remote = publication.get();
         return remote.topicName().equals(endpoint.topicName())
@@ -400,13 +385,15 @@ public final class RtpsDataReader<T> implements Closeable {
         return result;
     }
 
+    /** Identity allocated by the owning participant. */
+    public Guid guid() { return guidPrefix.toGuid(entityId); }
+
     @Override
     public synchronized void close() throws IOException {
         if (!running.compareAndSet(true, false)) {
             return;
         }
         notifyAll();
-        announcer.interrupt();
         IOException first = null;
         if (deadlineMonitor != null) {
             deadlineMonitor.close();
@@ -414,11 +401,9 @@ public final class RtpsDataReader<T> implements Closeable {
         if (livelinessMonitor != null) {
             livelinessMonitor.close();
         }
-        first = closeOrCapture(() -> sedpSubscriptionAnnouncer.disposeAndUnregister(), first);
+        first = closeOrCapture(() -> participant.unregister(guid(), false), first);
         first = closeOrCapture(userDataReader, first);
-        first = closeOrCapture(ackNackListener, first);
-        first = closeOrCapture(discoveryListener, first);
-        first = closeOrCapture(transport, first);
+        if (ownsParticipant) first = closeOrCapture(participant, first);
         messages.clear();
         if (first != null) {
             throw first;

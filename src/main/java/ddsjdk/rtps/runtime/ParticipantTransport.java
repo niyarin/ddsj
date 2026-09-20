@@ -1,0 +1,80 @@
+package ddsjdk.rtps.runtime;
+
+import ddsjdk.rtps.transport.RtpsPacket;
+import ddsjdk.rtps.transport.RtpsTransport;
+import ddsjdk.rtps.types.Locator;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** One physical subscription per traffic channel, shared by all participant endpoints. */
+final class ParticipantTransport implements RtpsTransport {
+    private final RtpsTransport delegate;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final List<PacketHandler> metaHandlers = new CopyOnWriteArrayList<>();
+    private final List<PacketHandler> userHandlers = new CopyOnWriteArrayList<>();
+    private final Closeable metaReceiver;
+    private final Closeable userReceiver;
+
+    ParticipantTransport(RtpsTransport delegate) throws IOException {
+        this.delegate = delegate;
+        Closeable meta = null;
+        try {
+            meta = delegate.listenMetatraffic(packet -> dispatch(metaHandlers, packet));
+            userReceiver = delegate.listenUserData(packet -> dispatch(userHandlers, packet));
+            metaReceiver = meta;
+        } catch (IOException | RuntimeException e) {
+            if (meta != null) {
+                try { meta.close(); } catch (IOException suppressed) { e.addSuppressed(suppressed); }
+            }
+            try { delegate.close(); } catch (IOException suppressed) { e.addSuppressed(suppressed); }
+            throw e;
+        }
+    }
+
+    private static void dispatch(List<PacketHandler> handlers, RtpsPacket packet) {
+        for (PacketHandler handler : handlers) {
+            try {
+                handler.handle(packet);
+            } catch (RuntimeException e) {
+                System.getLogger(ParticipantTransport.class.getName()).log(
+                        System.Logger.Level.WARNING, "RTPS packet handler failed", e);
+            }
+        }
+    }
+
+    public InetAddress multicastGroup() { return delegate.multicastGroup(); }
+    public void sendMetatraffic(byte[] message) throws IOException { delegate.sendMetatraffic(message); }
+    public void sendUserData(byte[] message) throws IOException {
+        delegate.sendUserData(message);
+    }
+    public void send(byte[] message, InetSocketAddress address) throws IOException { delegate.send(message, address); }
+    public Locator unicastLocator(int port) { return delegate.unicastLocator(port); }
+    public Locator multicastLocator(int port) { return delegate.multicastLocator(port); }
+    public Closeable listenMetatraffic(PacketHandler handler) {
+        metaHandlers.add(handler);
+        return () -> metaHandlers.remove(handler);
+    }
+    public Closeable listenUserData(PacketHandler handler) {
+        userHandlers.add(handler);
+        return () -> userHandlers.remove(handler);
+    }
+    public void close() throws IOException {
+        if (!closed.compareAndSet(false, true)) return;
+        metaHandlers.clear();
+        userHandlers.clear();
+        IOException failure = null;
+        for (Closeable resource : List.of(metaReceiver, userReceiver, delegate)) {
+            try { resource.close(); } catch (IOException e) {
+                if (failure == null) failure = e;
+                else failure.addSuppressed(e);
+            }
+        }
+        if (failure != null) throw failure;
+    }
+}
