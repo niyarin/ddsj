@@ -10,6 +10,7 @@ import ddsjdk.rtps.discovery.SedpSubscriptionAnnouncer;
 import ddsjdk.rtps.discovery.SpdpAnnouncer;
 import ddsjdk.rtps.discovery.SpdpDiscoveryListener;
 import ddsjdk.rtps.history.ReaderHistoryCache;
+import ddsjdk.rtps.history.ReaderSampleQueue;
 import ddsjdk.rtps.message.AckNackListener;
 import ddsjdk.rtps.message.Heartbeat;
 import ddsjdk.rtps.message.RtpsMessageBuilder;
@@ -30,7 +31,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import ddsjdk.rtps.history.ReaderSampleQueue;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -46,6 +48,9 @@ public final class RtpsDataReader<T> implements Closeable {
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final ReaderSampleQueue<T> messages;
     private final AtomicLong sampleRejectedCount = new AtomicLong();
+    private final AtomicLong deserializationErrorCount = new AtomicLong();
+    private volatile DeserializationError lastDeserializationError;
+    private volatile Consumer<DeserializationError> onDeserializationError = ignored -> { };
     private final ReaderHistoryCache history = new ReaderHistoryCache();
     private final AtomicLong ackNackCount = new AtomicLong(1);
     private final RemoteParticipantStore remoteParticipants = new RemoteParticipantStore();
@@ -147,34 +152,120 @@ public final class RtpsDataReader<T> implements Closeable {
         return sampleRejectedCount.get();
     }
 
-    public List<T> take() {
+    /** Removes up to maxSamples queued values in arrival order without waiting.
+     * @throws IllegalArgumentException if maxSamples is negative
+     * @throws IllegalStateException if this reader is closed
+     */
+    public synchronized List<T> drain(int maxSamples) {
+        if (maxSamples < 0) {
+            throw new IllegalArgumentException("maxSamples must not be negative");
+        }
+        ensureOpen();
         List<T> result = new ArrayList<>();
         T message;
-        while ((message = messages.poll()) != null) {
+        while (result.size() < maxSamples && (message = messages.poll()) != null) {
             result.add(message);
         }
         return result;
     }
 
-    public T read(Duration timeout) {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            T message = messages.poll();
-            if (message != null) {
-                return message;
-            }
-            try {
-                Thread.sleep(5);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return messages.poll();
-            }
-        }
-        return messages.poll();
+    /** Removes all currently queued values without waiting.
+     * @throws IllegalStateException if this reader is closed
+     */
+    public List<T> drain() {
+        return drain(Integer.MAX_VALUE);
     }
 
+    /** Removes one queued value without waiting; empty means no value is available.
+     * @throws IllegalStateException if this reader is closed
+     */
+    public synchronized Optional<T> poll() {
+        ensureOpen();
+        return Optional.ofNullable(messages.poll());
+    }
+
+    /** Removes one value, waiting up to timeout; zero performs an immediate poll.
+     * Empty means the timeout elapsed. Closing the reader wakes waiting callers.
+     * @throws InterruptedException if interrupted before or during the wait
+     * @throws IllegalStateException if this reader is closed
+     * @throws IllegalArgumentException if timeout is negative or exceeds Long.MAX_VALUE nanoseconds
+     */
+    public synchronized Optional<T> poll(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout, "timeout");
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout must not be negative");
+        }
+        final long timeoutNanos;
+        try {
+            timeoutNanos = timeout.toNanos();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("timeout is too large", e);
+        }
+        long start = System.nanoTime();
+        long remaining = timeoutNanos;
+        while (true) {
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
+            ensureOpen();
+            T message = messages.poll();
+            if (message != null) {
+                return Optional.of(message);
+            }
+            if (remaining <= 0) {
+                return Optional.empty();
+            }
+            wait(remaining / 1_000_000, (int) (remaining % 1_000_000));
+            remaining = timeoutNanos - (System.nanoTime() - start);
+        }
+    }
+
+    private void ensureOpen() {
+        if (!running.get()) {
+            throw new IllegalStateException("reader is closed");
+        }
+    }
+
+    /** @deprecated Use {@link #drain()} or {@link #drain(int)}. */
+    @Deprecated
+    public List<T> take() {
+        return drain();
+    }
+
+    /** @deprecated Use {@link #poll(Duration)} to distinguish timeout from interruption.
+     * This compatibility method returns null on timeout or interruption, restoring the interrupt flag.
+     */
+    @Deprecated
+    public T read(Duration timeout) {
+        try {
+            return poll(timeout).orElse(null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /** @deprecated Use {@link #poll(Duration)}. This method waits up to 100 ms. */
+    @Deprecated
     public T read() {
         return read(Duration.ofMillis(100));
+    }
+
+    /** Registers a non-blocking callback on the receiving thread, replacing the previous callback.
+     * Callback exceptions are logged and do not stop reception. Past errors are not replayed.
+     */
+    public void onDeserializationError(Consumer<DeserializationError> listener) {
+        onDeserializationError = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Number of failed decoding attempts, including null results and repeated deliveries. */
+    public long deserializationErrorCount() {
+        return deserializationErrorCount.get();
+    }
+
+    /** Latest decoding failure, retained even when no callback is registered. */
+    public Optional<DeserializationError> lastDeserializationError() {
+        return Optional.ofNullable(lastDeserializationError);
     }
 
     /**
@@ -225,21 +316,32 @@ public final class RtpsDataReader<T> implements Closeable {
         if (history.contains(sample)) {
             return;
         }
+        final T value;
         try {
-            if (!messages.offer(serializer.deserialize(sample.payload()))) {
-                sampleRejectedCount.incrementAndGet();
-                return;
+            value = Objects.requireNonNull(serializer.deserialize(sample.payload()), "deserializer returned null");
+        } catch (RuntimeException cause) {
+            var error = new DeserializationError(sample.writerGuid(), sample.sequenceNumber(), cause);
+            lastDeserializationError = error;
+            deserializationErrorCount.incrementAndGet();
+            try {
+                onDeserializationError.accept(error);
+            } catch (RuntimeException callbackError) {
+                System.getLogger(RtpsDataReader.class.getName()).log(
+                        System.Logger.Level.WARNING, "Deserialization error callback failed", callbackError);
             }
-            history.record(sample);
-            // Notify deadline monitor that data was received
-            if (deadlineMonitor != null) {
-                deadlineMonitor.notifyActivity();
-            }
-            // Notify liveliness monitor that writer is alive
-            if (livelinessMonitor != null) {
-                livelinessMonitor.assertLiveliness(sample.writerGuid());
-            }
-        } catch (RuntimeException ignored) {
+            return;
+        }
+        if (!messages.offer(value)) {
+            sampleRejectedCount.incrementAndGet();
+            return;
+        }
+        history.record(sample);
+        notifyAll();
+        if (deadlineMonitor != null) {
+            deadlineMonitor.notifyActivity();
+        }
+        if (livelinessMonitor != null) {
+            livelinessMonitor.assertLiveliness(sample.writerGuid());
         }
     }
 
@@ -303,6 +405,7 @@ public final class RtpsDataReader<T> implements Closeable {
         if (!running.compareAndSet(true, false)) {
             return;
         }
+        notifyAll();
         announcer.interrupt();
         IOException first = null;
         if (deadlineMonitor != null) {

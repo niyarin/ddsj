@@ -61,7 +61,7 @@ class RtpsIntegrationTest {
             writer.write("Hello RTPS");
 
             // Wait for message delivery
-            String received = reader.read(Duration.ofSeconds(3));
+            String received = reader.poll(Duration.ofSeconds(3)).orElse(null);
             assertEquals("Hello RTPS", received);
         }
     }
@@ -85,7 +85,7 @@ class RtpsIntegrationTest {
 
             List<String> received = new ArrayList<>();
             for (int i = 0; i < 3; i++) {
-                String msg = reader.read(Duration.ofSeconds(3));
+                String msg = reader.poll(Duration.ofSeconds(3)).orElse(null);
                 if (msg != null) {
                     received.add(msg);
                 }
@@ -110,7 +110,7 @@ class RtpsIntegrationTest {
 
             writer.write("Reliable Message");
 
-            String received = reader.read(Duration.ofSeconds(5));
+            String received = reader.poll(Duration.ofSeconds(5)).orElse(null);
             assertEquals("Reliable Message", received);
         }
     }
@@ -136,7 +136,7 @@ class RtpsIntegrationTest {
             // Allow time for heartbeat/acknack cycle
             Thread.sleep(2000);
 
-            List<String> received = reader.take();
+            List<String> received = reader.drain();
             assertTrue(received.size() >= messageCount / 2,
                     "Expected at least half of messages, got " + received.size());
         }
@@ -160,7 +160,7 @@ class RtpsIntegrationTest {
             try (var reader = new RtpsDataReader<>(readerConfig, readerEndpoint, STRING_SERIALIZER)) {
                 Thread.sleep(3000);
 
-                String received = reader.read(Duration.ofSeconds(3));
+                String received = reader.poll(Duration.ofSeconds(3)).orElse(null);
                 // Note: actual late-join behavior depends on implementation
                 // This test verifies the QoS is properly exchanged
                 assertNotNull(writer);
@@ -187,7 +187,7 @@ class RtpsIntegrationTest {
             }
 
             Thread.sleep(2000);
-            List<String> received = reader.take();
+            List<String> received = reader.drain();
             assertFalse(received.isEmpty(), "Should receive messages with KEEP_ALL");
         }
     }
@@ -212,7 +212,7 @@ class RtpsIntegrationTest {
 
             // With QoS mismatch, message delivery is not guaranteed
             // Best effort writer cannot satisfy reliable reader
-            String received = reader.read(Duration.ofSeconds(2));
+            String received = reader.poll(Duration.ofSeconds(2)).orElse(null);
             // Due to undiscovered publication handling, message may still arrive
             // This test mainly verifies no exceptions occur
         }
@@ -234,7 +234,7 @@ class RtpsIntegrationTest {
 
             writer.write("Wrong topic message");
 
-            String received = reader.read(Duration.ofSeconds(1));
+            String received = reader.poll(Duration.ofSeconds(1)).orElse(null);
             // Different topics should not match after discovery
             // Initial message may arrive before discovery completes
         }
@@ -255,7 +255,7 @@ class RtpsIntegrationTest {
 
             writer.write("Domain 0 message");
 
-            String received = reader.read(Duration.ofSeconds(1));
+            String received = reader.poll(Duration.ofSeconds(1)).orElse(null);
             // Different domains use different ports, so no communication
             assertNull(received, "Different domains should not communicate");
         }
@@ -281,7 +281,7 @@ class RtpsIntegrationTest {
 
             Thread.sleep(500);
 
-            List<String> received = reader.take();
+            List<String> received = reader.drain();
             assertTrue(received.size() >= 1, "Should receive from at least one writer");
         }
     }
@@ -321,7 +321,7 @@ class RtpsIntegrationTest {
 
             writer.write(12345);
 
-            Integer received = reader.read(Duration.ofSeconds(3));
+            Integer received = reader.poll(Duration.ofSeconds(3)).orElse(null);
             assertEquals(12345, received);
         }
     }
@@ -362,7 +362,7 @@ class RtpsIntegrationTest {
             // Wait for fragments to arrive and be assembled
             Thread.sleep(3000);
 
-            byte[] received = reader.read(Duration.ofSeconds(5));
+            byte[] received = reader.poll(Duration.ofSeconds(5)).orElse(null);
             assertNotNull(received, "Should receive large fragmented data");
             assertArrayEquals(largePayload, received);
         }
@@ -429,7 +429,7 @@ class RtpsIntegrationTest {
             Thread.sleep(100);
 
             // Verify message received
-            String received = reader.read(Duration.ofMillis(200));
+            String received = reader.poll(Duration.ofMillis(200)).orElse(null);
             assertNotNull(received);
 
             // Now stop writing and wait for deadline to expire
