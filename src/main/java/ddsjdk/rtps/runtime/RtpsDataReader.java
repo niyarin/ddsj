@@ -30,9 +30,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Queue;
+import ddsjdk.rtps.history.ReaderSampleQueue;
 import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -45,7 +44,8 @@ public final class RtpsDataReader<T> implements Closeable {
     private final RtpsTransport transport;
     private final GuidPrefix guidPrefix = RtpsGuid.newGuidPrefix();
     private final AtomicBoolean running = new AtomicBoolean(true);
-    private final Queue<T> messages = new ConcurrentLinkedQueue<>();
+    private final ReaderSampleQueue<T> messages;
+    private final AtomicLong sampleRejectedCount = new AtomicLong();
     private final ReaderHistoryCache history = new ReaderHistoryCache();
     private final AtomicLong ackNackCount = new AtomicLong(1);
     private final RemoteParticipantStore remoteParticipants = new RemoteParticipantStore();
@@ -105,6 +105,7 @@ public final class RtpsDataReader<T> implements Closeable {
             Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
             Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
         this.endpoint = endpoint;
+        this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
         this.serializer = serializer;
         this.transport = transport;
         this.spdpAnnouncer = new SpdpAnnouncer(config, transport, guidPrefix);
@@ -139,6 +140,11 @@ public final class RtpsDataReader<T> implements Closeable {
         this.announcer = new Thread(this::announceLoop, "ddsjdk-rtps-reader-announcer-" + endpoint.topicName());
         this.announcer.setDaemon(true);
         this.announcer.start();
+    }
+
+    /** Number of deliveries rejected because KEEP_ALL unread history was full. */
+    public long sampleRejectedCount() {
+        return sampleRejectedCount.get();
     }
 
     public List<T> take() {
@@ -209,15 +215,22 @@ public final class RtpsDataReader<T> implements Closeable {
         }
     }
 
-    private void onSample(UserDataSample sample) {
+    private synchronized void onSample(UserDataSample sample) {
+        if (!running.get()) {
+            return;
+        }
         if (!isMatchedOrUndiscoveredPublication(sample.writerGuid())) {
             return;
         }
-        if (!history.record(sample)) {
+        if (history.contains(sample)) {
             return;
         }
         try {
-            messages.add(serializer.deserialize(sample.payload()));
+            if (!messages.offer(serializer.deserialize(sample.payload()))) {
+                sampleRejectedCount.incrementAndGet();
+                return;
+            }
+            history.record(sample);
             // Notify deadline monitor that data was received
             if (deadlineMonitor != null) {
                 deadlineMonitor.notifyActivity();
@@ -286,7 +299,7 @@ public final class RtpsDataReader<T> implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         if (!running.compareAndSet(true, false)) {
             return;
         }
@@ -303,6 +316,7 @@ public final class RtpsDataReader<T> implements Closeable {
         first = closeOrCapture(ackNackListener, first);
         first = closeOrCapture(discoveryListener, first);
         first = closeOrCapture(transport, first);
+        messages.clear();
         if (first != null) {
             throw first;
         }

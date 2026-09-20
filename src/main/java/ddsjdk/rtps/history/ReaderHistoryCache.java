@@ -27,6 +27,11 @@ public final class ReaderHistoryCache {
         this.maxTrackedSequencesPerWriter = maxTrackedSequencesPerWriter;
     }
 
+    public boolean contains(UserDataSample sample) {
+        Set<Long> sequences = receivedSequencesByWriter.get(sample.writerGuid());
+        return sequences != null && sequences.contains(sample.sequenceNumber());
+    }
+
     public boolean record(UserDataSample sample) {
         Set<Long> receivedSequences = receivedSequencesByWriter.computeIfAbsent(sample.writerGuid(), ignored -> ConcurrentHashMap.newKeySet());
         boolean isNew = receivedSequences.add(sample.sequenceNumber());
