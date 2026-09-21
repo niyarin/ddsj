@@ -2,7 +2,6 @@ package ddsjdk.rtps;
 
 import ddsjdk.rtps.discovery.EndpointQos;
 import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
-import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
 import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
@@ -47,7 +46,8 @@ class RtpsIntegrationTest {
 
     @Test
     void bestEffortPubSub_singleMessage() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .build();
         var endpoint = new LocalEndpoint("TestTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 0);
@@ -69,7 +69,8 @@ class RtpsIntegrationTest {
 
     @Test
     void bestEffortPubSub_multipleMessages() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .build();
         var endpoint = new LocalEndpoint("MultiMessageTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 2);
@@ -98,7 +99,9 @@ class RtpsIntegrationTest {
 
     @Test
     void reliablePubSub_singleMessage() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .reliability(ReliabilityKind.RELIABLE)
+                .build();
         var endpoint = new LocalEndpoint("ReliableTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 4);
@@ -118,7 +121,10 @@ class RtpsIntegrationTest {
 
     @Test
     void reliablePubSub_multipleMessages() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 100);
+        var qos = EndpointQos.builder()
+                .reliability(ReliabilityKind.RELIABLE)
+                .keepLast(100)
+                .build();
         var endpoint = new LocalEndpoint("ReliableMultiTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 6);
@@ -145,7 +151,10 @@ class RtpsIntegrationTest {
 
     @Test
     void transientLocalDurability() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.TRANSIENT_LOCAL, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .reliability(ReliabilityKind.RELIABLE)
+                .durability(DurabilityKind.TRANSIENT_LOCAL)
+                .build();
         var writerEndpoint = new LocalEndpoint("DurableTopic", "String", qos);
         var readerEndpoint = new LocalEndpoint("DurableTopic", "String", qos);
 
@@ -172,7 +181,10 @@ class RtpsIntegrationTest {
 
     @Test
     void keepAllHistory() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.VOLATILE, HistoryKind.KEEP_ALL, 1);
+        var qos = EndpointQos.builder()
+                .reliability(ReliabilityKind.RELIABLE)
+                .keepAll()
+                .build();
         var endpoint = new LocalEndpoint("KeepAllTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 10);
@@ -195,8 +207,11 @@ class RtpsIntegrationTest {
 
     @Test
     void qosMismatch_reliabilityIncompatible() throws Exception {
-        var writerQos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
-        var readerQos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var writerQos = EndpointQos.builder()
+                .build();
+        var readerQos = EndpointQos.builder()
+                .reliability(ReliabilityKind.RELIABLE)
+                .build();
 
         var writerEndpoint = new LocalEndpoint("MismatchTopic", "String", writerQos);
         var readerEndpoint = new LocalEndpoint("MismatchTopic", "String", readerQos);
@@ -264,7 +279,8 @@ class RtpsIntegrationTest {
 
     @Test
     void multipleWritersSameTopic() throws Exception {
-        var qos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .build();
         var endpoint = new LocalEndpoint("SharedTopic", "String", qos);
 
         var writer1Config = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 17);
@@ -309,7 +325,8 @@ class RtpsIntegrationTest {
             }
         };
 
-        var qos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .build();
         var endpoint = new LocalEndpoint("IntTopic", "Int32", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 20);
@@ -341,7 +358,8 @@ class RtpsIntegrationTest {
             }
         };
 
-        var qos = new EndpointQos(ReliabilityKind.BEST_EFFORT, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+        var qos = EndpointQos.builder()
+                .build();
         var endpoint = new LocalEndpoint("LargeDataTopic", "ByteArray", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 22);
@@ -372,12 +390,9 @@ class RtpsIntegrationTest {
     @Test
     void deadline_noMissWhenWriterSendsRegularly() throws Exception {
         // Deadline of 500ms, writer sends every 200ms - should not miss
-        var qos = new EndpointQos(
-                ReliabilityKind.BEST_EFFORT,
-                DurabilityKind.VOLATILE,
-                HistoryKind.KEEP_LAST,
-                10,
-                Duration.ofMillis(500));
+        var qos = EndpointQos.builder()
+                .deadline(Duration.ofMillis(500))
+                .build();
         var endpoint = new LocalEndpoint("DeadlineTestTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 24);
@@ -406,12 +421,9 @@ class RtpsIntegrationTest {
     @Test
     void deadline_missDetectedWhenWriterStops() throws Exception {
         // Deadline of 200ms
-        var qos = new EndpointQos(
-                ReliabilityKind.BEST_EFFORT,
-                DurabilityKind.VOLATILE,
-                HistoryKind.KEEP_LAST,
-                10,
-                Duration.ofMillis(200));
+        var qos = EndpointQos.builder()
+                .deadline(Duration.ofMillis(200))
+                .build();
         var endpoint = new LocalEndpoint("DeadlineMissTestTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 26);
@@ -446,16 +458,11 @@ class RtpsIntegrationTest {
     @Test
     void liveliness_automaticWriterBecomesAlive() throws Exception {
         // Liveliness lease of 500ms with AUTOMATIC kind
-        var qos = new EndpointQos(
-                ReliabilityKind.BEST_EFFORT,
-                DurabilityKind.VOLATILE,
-                HistoryKind.KEEP_LAST,
-                10,
-                EndpointQos.DEADLINE_INFINITE,
-                EndpointQos.OwnershipKind.SHARED,
-                0,
-                LivelinessKind.AUTOMATIC,
-                Duration.ofMillis(500));
+        var qos = EndpointQos.builder()
+                .deadline(EndpointQos.DEADLINE_INFINITE)
+                .ownership(EndpointQos.OwnershipKind.SHARED, 0)
+                .liveliness(LivelinessKind.AUTOMATIC, Duration.ofMillis(500))
+                .build();
         var endpoint = new LocalEndpoint("LivelinessAutoTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 28);
@@ -481,16 +488,11 @@ class RtpsIntegrationTest {
     @Test
     void liveliness_manualByTopicAssertion() throws Exception {
         // Liveliness with MANUAL_BY_TOPIC kind
-        var qos = new EndpointQos(
-                ReliabilityKind.BEST_EFFORT,
-                DurabilityKind.VOLATILE,
-                HistoryKind.KEEP_LAST,
-                10,
-                EndpointQos.DEADLINE_INFINITE,
-                EndpointQos.OwnershipKind.SHARED,
-                0,
-                LivelinessKind.MANUAL_BY_TOPIC,
-                Duration.ofMillis(500));
+        var qos = EndpointQos.builder()
+                .deadline(EndpointQos.DEADLINE_INFINITE)
+                .ownership(EndpointQos.OwnershipKind.SHARED, 0)
+                .liveliness(LivelinessKind.MANUAL_BY_TOPIC, Duration.ofMillis(500))
+                .build();
         var endpoint = new LocalEndpoint("LivelinessManualTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 30);
@@ -516,16 +518,11 @@ class RtpsIntegrationTest {
     @Test
     void liveliness_writerBecomesNotAlive() throws Exception {
         // Short liveliness lease of 200ms
-        var qos = new EndpointQos(
-                ReliabilityKind.BEST_EFFORT,
-                DurabilityKind.VOLATILE,
-                HistoryKind.KEEP_LAST,
-                10,
-                EndpointQos.DEADLINE_INFINITE,
-                EndpointQos.OwnershipKind.SHARED,
-                0,
-                LivelinessKind.AUTOMATIC,
-                Duration.ofMillis(200));
+        var qos = EndpointQos.builder()
+                .deadline(EndpointQos.DEADLINE_INFINITE)
+                .ownership(EndpointQos.OwnershipKind.SHARED, 0)
+                .liveliness(LivelinessKind.AUTOMATIC, Duration.ofMillis(200))
+                .build();
         var endpoint = new LocalEndpoint("LivelinessExpireTopic", "String", qos);
 
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 32);
@@ -581,7 +578,9 @@ class RtpsIntegrationTest {
         try (var publisher = new RtpsParticipant(config);
              var subscriber = new RtpsParticipant(peerConfig)) {
             // Reliable delivery retries samples written before discovery completes.
-            var qos = new EndpointQos(ReliabilityKind.RELIABLE, DurabilityKind.VOLATILE, HistoryKind.KEEP_LAST, 10);
+            var qos = EndpointQos.builder()
+                .reliability(ReliabilityKind.RELIABLE)
+                .build();
             var one = new LocalEndpoint("one", "bytes", qos);
             var two = new LocalEndpoint("two", "bytes", qos);
             var writer1 = publisher.createWriter(one, BYTE_ARRAY_SERIALIZER);

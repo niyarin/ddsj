@@ -1,7 +1,9 @@
 package ddsjdk.rtps.discovery;
 
 import java.time.Duration;
+import java.util.Objects;
 
+/** Immutable endpoint policies. Prefer {@link #builder()} for named configuration. */
 public record EndpointQos(
         ReliabilityKind reliability,
         DurabilityKind durability,
@@ -84,6 +86,97 @@ public record EndpointQos(
                        Duration deadline, OwnershipKind ownership, int ownershipStrength) {
         this(reliability, durability, history, depth, deadline, ownership, ownershipStrength,
                 LivelinessKind.AUTOMATIC, LEASE_DURATION_INFINITE);
+    }
+
+    /** Starts with DEFAULT; omitted policies retain their default values. */
+    public static Builder builder() {
+        return DEFAULT.toBuilder();
+    }
+
+    /** Copies every policy for independent modification. */
+    public Builder toBuilder() {
+        return new Builder(this);
+    }
+
+    /**
+     * Mutable builder producing immutable snapshots. Enum setters reject null.
+     * Numeric and duration validation uses the constructor rules at build time.
+     */
+    public static final class Builder {
+        private ReliabilityKind reliability;
+        private DurabilityKind durability;
+        private HistoryKind history;
+        private int depth;
+        private Duration deadline;
+        private OwnershipKind ownership;
+        private int ownershipStrength;
+        private LivelinessKind liveliness;
+        private Duration leaseDuration;
+
+        private Builder(EndpointQos qos) {
+            reliability = qos.reliability();
+            durability = qos.durability();
+            history = qos.history();
+            depth = qos.depth();
+            deadline = qos.deadline();
+            ownership = qos.ownership();
+            ownershipStrength = qos.ownershipStrength();
+            liveliness = qos.liveliness();
+            leaseDuration = qos.leaseDuration();
+        }
+
+        public Builder reliability(ReliabilityKind kind) {
+            reliability = Objects.requireNonNull(kind, "reliability");
+            return this;
+        }
+
+        public Builder durability(DurabilityKind kind) {
+            durability = Objects.requireNonNull(kind, "durability");
+            return this;
+        }
+
+        /** Configures history kind and its positive wire depth together. */
+        public Builder history(HistoryKind kind, int depth) {
+            this.history = Objects.requireNonNull(kind, "history");
+            this.depth = depth;
+            return this;
+        }
+
+        public Builder keepLast(int depth) {
+            return history(HistoryKind.KEEP_LAST, depth);
+        }
+
+        /** Selects KEEP_ALL with a canonical positive wire depth of 1. */
+        public Builder keepAll() {
+            return history(HistoryKind.KEEP_ALL, 1);
+        }
+
+        /** Null selects DEADLINE_INFINITE, as in the constructors. */
+        public Builder deadline(Duration deadline) {
+            this.deadline = deadline;
+            return this;
+        }
+
+        public Builder ownership(OwnershipKind kind, int strength) {
+            this.ownership = Objects.requireNonNull(kind, "ownership");
+            this.ownershipStrength = strength;
+            return this;
+        }
+
+        /** Null lease duration selects LEASE_DURATION_INFINITE. */
+        public Builder liveliness(LivelinessKind kind, Duration leaseDuration) {
+            this.liveliness = Objects.requireNonNull(kind, "liveliness");
+            this.leaseDuration = leaseDuration;
+            return this;
+        }
+
+        public EndpointQos build() {
+            Objects.requireNonNull(reliability, "reliability");
+            Objects.requireNonNull(durability, "durability");
+            Objects.requireNonNull(history, "history");
+            return new EndpointQos(reliability, durability, history, depth, deadline,
+                    ownership, ownershipStrength, liveliness, leaseDuration);
+        }
     }
 
     public boolean isCompatibleWithRequested(EndpointQos requested) {
