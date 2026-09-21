@@ -108,9 +108,4 @@ public final class DeadlineMonitor implements Closeable {
             monitorThread.interrupt();
         }
     }
-
-    /**
-     * Status information provided when a deadline is missed.
-     */
-    public record DeadlineMissedStatus(long totalCount, Duration deadline) {}
 }

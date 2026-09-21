@@ -67,7 +67,7 @@ public final class RtpsDataReader<T> implements Closeable {
             RtpsParticipantConfig config,
             LocalEndpoint endpoint,
             PayloadSerializer<T> serializer,
-            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed) throws IOException {
+            Consumer<DeadlineMissedStatus> onDeadlineMissed) throws IOException {
         this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, onDeadlineMissed, null);
     }
 
@@ -80,7 +80,7 @@ public final class RtpsDataReader<T> implements Closeable {
             LocalEndpoint endpoint,
             PayloadSerializer<T> serializer,
             RtpsTransport transport,
-            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed) throws IOException {
+            Consumer<DeadlineMissedStatus> onDeadlineMissed) throws IOException {
         this(config, endpoint, serializer, transport, onDeadlineMissed, null);
     }
 
@@ -88,8 +88,8 @@ public final class RtpsDataReader<T> implements Closeable {
             RtpsParticipantConfig config,
             LocalEndpoint endpoint,
             PayloadSerializer<T> serializer,
-            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
-            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+            Consumer<DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
         this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, onDeadlineMissed, onLivelinessChanged);
     }
 
@@ -98,14 +98,14 @@ public final class RtpsDataReader<T> implements Closeable {
             LocalEndpoint endpoint,
             PayloadSerializer<T> serializer,
             RtpsTransport transport,
-            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
-            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+            Consumer<DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
         this(RtpsParticipant.owned(config, endpoint, serializer, transport), endpoint, serializer, true, onDeadlineMissed, onLivelinessChanged);
     }
 
     RtpsDataReader(RtpsParticipant participant, LocalEndpoint endpoint, PayloadSerializer<T> serializer, boolean ownsParticipant,
-            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
-            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+            Consumer<DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(serializer, "serializer");
         this.participant = participant;

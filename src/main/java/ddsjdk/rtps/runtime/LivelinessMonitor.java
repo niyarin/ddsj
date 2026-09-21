@@ -134,15 +134,6 @@ public final class LivelinessMonitor implements Closeable {
         }
     }
 
-    /**
-     * Status information provided when liveliness changes.
-     */
-    public record LivelinessChangedStatus(
-            Guid writerGuid,
-            boolean alive,
-            long aliveCount,
-            long notAliveCount) {}
-
     private static final class WriterState {
         private volatile long lastActivityTime = 0;
         private volatile boolean alive = false;

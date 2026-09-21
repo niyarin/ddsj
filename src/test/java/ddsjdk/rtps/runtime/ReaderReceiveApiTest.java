@@ -245,8 +245,8 @@ class ReaderReceiveApiTest {
 
     @Test void finiteQosStillNotifiesCallbacks() throws Exception {
         var transport = new FakeTransport();
-        var deadlines = new CopyOnWriteArrayList<DeadlineMonitor.DeadlineMissedStatus>();
-        var liveliness = new CopyOnWriteArrayList<LivelinessMonitor.LivelinessChangedStatus>();
+        var deadlines = new CopyOnWriteArrayList<DeadlineMissedStatus>();
+        var liveliness = new CopyOnWriteArrayList<LivelinessChangedStatus>();
         try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
                 monitoredEndpoint(), CODEC, transport, deadlines::add, liveliness::add)) {
             transport.deliverData(1);
@@ -262,8 +262,8 @@ class ReaderReceiveApiTest {
 
     @Test void infiniteQosDoesNotMonitorEvenWithCallbacks() throws Exception {
         var transport = new FakeTransport();
-        var deadlines = new CopyOnWriteArrayList<DeadlineMonitor.DeadlineMissedStatus>();
-        var liveliness = new CopyOnWriteArrayList<LivelinessMonitor.LivelinessChangedStatus>();
+        var deadlines = new CopyOnWriteArrayList<DeadlineMissedStatus>();
+        var liveliness = new CopyOnWriteArrayList<LivelinessChangedStatus>();
         try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
                 new LocalEndpoint("topic", "int", EndpointQos.DEFAULT), CODEC,
                 transport, deadlines::add, liveliness::add)) {

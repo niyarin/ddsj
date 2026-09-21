@@ -111,8 +111,8 @@ public final class RtpsParticipant implements Closeable {
     }
 
     public synchronized <T> RtpsDataReader<T> createReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer,
-            Consumer<DeadlineMonitor.DeadlineMissedStatus> onDeadlineMissed,
-            Consumer<LivelinessMonitor.LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+            Consumer<DeadlineMissedStatus> onDeadlineMissed,
+            Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
         ensureOpen();
         return new RtpsDataReader<>(this, endpoint, serializer, false, onDeadlineMissed, onLivelinessChanged);
     }

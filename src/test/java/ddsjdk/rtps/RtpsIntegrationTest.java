@@ -6,8 +6,8 @@ import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
 import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
-import ddsjdk.rtps.runtime.DeadlineMonitor;
-import ddsjdk.rtps.runtime.LivelinessMonitor;
+import ddsjdk.rtps.runtime.DeadlineMissedStatus;
+import ddsjdk.rtps.runtime.LivelinessChangedStatus;
 import ddsjdk.rtps.runtime.PayloadSerializer;
 import ddsjdk.rtps.runtime.RtpsDataReader;
 import ddsjdk.rtps.runtime.RtpsDataWriter;
@@ -417,7 +417,7 @@ class RtpsIntegrationTest {
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 26);
         var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 27);
 
-        List<DeadlineMonitor.DeadlineMissedStatus> missEvents = new CopyOnWriteArrayList<>();
+        List<DeadlineMissedStatus> missEvents = new CopyOnWriteArrayList<>();
 
         try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
              var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
@@ -461,11 +461,11 @@ class RtpsIntegrationTest {
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 28);
         var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 29);
 
-        List<LivelinessMonitor.LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
+        List<LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
 
         try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
              var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
-                     (Consumer<DeadlineMonitor.DeadlineMissedStatus>) null, livelinessEvents::add)) {
+                     (Consumer<DeadlineMissedStatus>) null, livelinessEvents::add)) {
 
             Thread.sleep(1500); // Wait for discovery
 
@@ -531,10 +531,10 @@ class RtpsIntegrationTest {
         var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 32);
         var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 33);
 
-        List<LivelinessMonitor.LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
+        List<LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
 
         try (var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
-                (Consumer<DeadlineMonitor.DeadlineMissedStatus>) null, livelinessEvents::add)) {
+                (Consumer<DeadlineMissedStatus>) null, livelinessEvents::add)) {
             // Create writer, send data, then close it
             try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER)) {
                 Thread.sleep(1500);
