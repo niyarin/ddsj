@@ -248,7 +248,8 @@ class ReaderReceiveApiTest {
         var deadlines = new CopyOnWriteArrayList<DeadlineMissedStatus>();
         var liveliness = new CopyOnWriteArrayList<LivelinessChangedStatus>();
         try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
-                monitoredEndpoint(), CODEC, transport, deadlines::add, liveliness::add)) {
+                monitoredEndpoint(), CODEC, transport, ReaderListeners.builder().onDeadlineMissed(deadlines::add)
+                        .onLivelinessChanged(liveliness::add).build())) {
             transport.deliverData(1);
             awaitCondition(() -> !deadlines.isEmpty()
                     && liveliness.stream().anyMatch(status -> !status.alive()));
@@ -266,13 +267,51 @@ class ReaderReceiveApiTest {
         var liveliness = new CopyOnWriteArrayList<LivelinessChangedStatus>();
         try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
                 new LocalEndpoint("topic", "int", EndpointQos.DEFAULT), CODEC,
-                transport, deadlines::add, liveliness::add)) {
+                transport, ReaderListeners.builder().onDeadlineMissed(deadlines::add)
+                        .onLivelinessChanged(liveliness::add).build())) {
             transport.deliverData(1);
             assertEquals(0, reader.deadlineMissedCount());
             assertEquals(0, reader.livelinessAliveCount());
             assertEquals(0, reader.livelinessNotAliveCount());
             assertTrue(deadlines.isEmpty());
             assertTrue(liveliness.isEmpty());
+        }
+    }
+
+    @Test void listenersCaptureInitialErrorListenerAndBuilderChangesDoNotAffectReader() throws Exception {
+        var transport = new FakeTransport();
+        var errors = new CopyOnWriteArrayList<DeserializationError>();
+        var replacement = new CopyOnWriteArrayList<DeserializationError>();
+        var builder = ReaderListeners.builder().onDeserializationError(errors::add);
+        var listeners = builder.build();
+        builder.onDeserializationError(replacement::add);
+        var codec = new PayloadSerializer<Integer>() {
+            public byte[] serialize(Integer value) { return CODEC.serialize(value); }
+            public Integer deserialize(byte[] bytes) { throw new IllegalArgumentException("bad payload"); }
+        };
+        try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
+                monitoredEndpoint(), codec, transport, listeners)) {
+            transport.deliverData(1);
+            assertEquals(1, errors.size());
+            assertTrue(replacement.isEmpty());
+            reader.onDeserializationError(replacement::add);
+            transport.deliverData(2);
+            assertEquals(1, errors.size());
+            assertEquals(1, replacement.size());
+            assertEquals(2, reader.deserializationErrorCount());
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Test void legacyCallbacksStillDelegateToListeners() throws Exception {
+        var transport = new FakeTransport();
+        var events = new CopyOnWriteArrayList<LivelinessChangedStatus>();
+        try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
+                monitoredEndpoint(), CODEC, transport, null, events::add)) {
+            transport.deliverData(1);
+            awaitCondition(() -> events.stream().anyMatch(status -> !status.alive()));
+            assertTrue(events.get(0).alive());
+            assertEquals(1, reader.livelinessNotAliveCount());
         }
     }
 

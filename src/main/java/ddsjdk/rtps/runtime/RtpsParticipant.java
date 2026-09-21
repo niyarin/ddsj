@@ -107,14 +107,22 @@ public final class RtpsParticipant implements Closeable {
     }
 
     public <T> RtpsDataReader<T> createReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
-        return createReader(endpoint, serializer, null, null);
+        return createReader(endpoint, serializer, ReaderListeners.DEFAULT);
     }
 
+    /** Creates a reader with named notification listeners. */
     public synchronized <T> RtpsDataReader<T> createReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            ReaderListeners listeners) throws IOException {
+        ensureOpen();
+        return new RtpsDataReader<>(this, endpoint, serializer, false, listeners);
+    }
+
+    /** @deprecated Use {@link #createReader(LocalEndpoint, PayloadSerializer, ReaderListeners)}. */
+    @Deprecated
+    public <T> RtpsDataReader<T> createReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer,
             Consumer<DeadlineMissedStatus> onDeadlineMissed,
             Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
-        ensureOpen();
-        return new RtpsDataReader<>(this, endpoint, serializer, false, onDeadlineMissed, onLivelinessChanged);
+        return createReader(endpoint, serializer, ReaderListeners.legacy(onDeadlineMissed, onLivelinessChanged));
     }
 
     static RtpsParticipant owned(RtpsParticipantConfig config, LocalEndpoint endpoint,

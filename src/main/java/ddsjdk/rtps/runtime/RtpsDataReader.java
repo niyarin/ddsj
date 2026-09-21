@@ -56,58 +56,71 @@ public final class RtpsDataReader<T> implements Closeable {
     private final LivelinessMonitor livelinessMonitor;
 
     public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
-        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, null, null);
+        this(config, endpoint, serializer, ReaderListeners.DEFAULT);
     }
 
     public RtpsDataReader(LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
         this(new RtpsParticipantConfig(0), endpoint, serializer);
     }
 
-    public RtpsDataReader(
-            RtpsParticipantConfig config,
-            LocalEndpoint endpoint,
-            PayloadSerializer<T> serializer,
+    /** Creates a reader with named notification listeners and an owned participant. */
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            ReaderListeners listeners) throws IOException {
+        this(RtpsParticipant.owned(requireListeners(config, listeners), endpoint, serializer), endpoint, serializer, true, listeners);
+    }
+
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            RtpsTransport transport) throws IOException {
+        this(config, endpoint, serializer, transport, ReaderListeners.DEFAULT);
+    }
+
+    /** Creates a reader with named notification listeners; the participant takes ownership of transport. */
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            RtpsTransport transport, ReaderListeners listeners) throws IOException {
+        this(RtpsParticipant.owned(requireListeners(config, listeners), endpoint, serializer, transport), endpoint, serializer, true, listeners);
+    }
+
+    private static RtpsParticipantConfig requireListeners(RtpsParticipantConfig config, ReaderListeners listeners) {
+        Objects.requireNonNull(listeners, "listeners");
+        return config;
+    }
+
+    /** @deprecated Use the constructor accepting {@link ReaderListeners}. */
+    @Deprecated
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
             Consumer<DeadlineMissedStatus> onDeadlineMissed) throws IOException {
-        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, onDeadlineMissed, null);
+        this(config, endpoint, serializer, ReaderListeners.legacy(onDeadlineMissed, null));
     }
 
-    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer, RtpsTransport transport) throws IOException {
-        this(config, endpoint, serializer, transport, null);
+    /** @deprecated Use the constructor accepting {@link ReaderListeners}. */
+    @Deprecated
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            RtpsTransport transport, Consumer<DeadlineMissedStatus> onDeadlineMissed) throws IOException {
+        this(config, endpoint, serializer, transport, ReaderListeners.legacy(onDeadlineMissed, null));
     }
 
-    public RtpsDataReader(
-            RtpsParticipantConfig config,
-            LocalEndpoint endpoint,
-            PayloadSerializer<T> serializer,
-            RtpsTransport transport,
-            Consumer<DeadlineMissedStatus> onDeadlineMissed) throws IOException {
-        this(config, endpoint, serializer, transport, onDeadlineMissed, null);
-    }
-
-    public RtpsDataReader(
-            RtpsParticipantConfig config,
-            LocalEndpoint endpoint,
-            PayloadSerializer<T> serializer,
+    /** @deprecated Use the constructor accepting {@link ReaderListeners}. */
+    @Deprecated
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
             Consumer<DeadlineMissedStatus> onDeadlineMissed,
             Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
-        this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true, onDeadlineMissed, onLivelinessChanged);
+        this(config, endpoint, serializer, ReaderListeners.legacy(onDeadlineMissed, onLivelinessChanged));
     }
 
-    public RtpsDataReader(
-            RtpsParticipantConfig config,
-            LocalEndpoint endpoint,
-            PayloadSerializer<T> serializer,
-            RtpsTransport transport,
-            Consumer<DeadlineMissedStatus> onDeadlineMissed,
+    /** @deprecated Use the constructor accepting {@link ReaderListeners}. */
+    @Deprecated
+    public RtpsDataReader(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            RtpsTransport transport, Consumer<DeadlineMissedStatus> onDeadlineMissed,
             Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
-        this(RtpsParticipant.owned(config, endpoint, serializer, transport), endpoint, serializer, true, onDeadlineMissed, onLivelinessChanged);
+        this(config, endpoint, serializer, transport, ReaderListeners.legacy(onDeadlineMissed, onLivelinessChanged));
     }
 
-    RtpsDataReader(RtpsParticipant participant, LocalEndpoint endpoint, PayloadSerializer<T> serializer, boolean ownsParticipant,
-            Consumer<DeadlineMissedStatus> onDeadlineMissed,
-            Consumer<LivelinessChangedStatus> onLivelinessChanged) throws IOException {
+    RtpsDataReader(RtpsParticipant participant, LocalEndpoint endpoint, PayloadSerializer<T> serializer,
+            boolean ownsParticipant, ReaderListeners listeners) throws IOException {
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(serializer, "serializer");
+        Objects.requireNonNull(listeners, "listeners");
+        this.onDeserializationError = listeners.deserializationListener();
         this.participant = participant;
         this.ownsParticipant = ownsParticipant;
         List<Closeable> opened = new ArrayList<>();
@@ -126,7 +139,7 @@ public final class RtpsDataReader<T> implements Closeable {
 
             // Initialize deadline monitor if deadline is finite
             if (endpoint.qos().hasFiniteDeadline()) {
-                this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), onDeadlineMissed);
+                this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), listeners.deadlineListener());
                 opened.add(deadlineMonitor);
             } else {
                 this.deadlineMonitor = null;
@@ -134,7 +147,7 @@ public final class RtpsDataReader<T> implements Closeable {
 
             // Initialize liveliness monitor if lease duration is finite
             if (endpoint.qos().hasFiniteLeaseDuration()) {
-                this.livelinessMonitor = new LivelinessMonitor(endpoint.qos().leaseDuration(), onLivelinessChanged);
+                this.livelinessMonitor = new LivelinessMonitor(endpoint.qos().leaseDuration(), listeners.livelinessListener());
                 opened.add(livelinessMonitor);
             } else {
                 this.livelinessMonitor = null;

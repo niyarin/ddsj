@@ -26,7 +26,7 @@ import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
+import ddsjdk.rtps.runtime.ReaderListeners;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -387,7 +387,7 @@ class RtpsIntegrationTest {
 
         try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
              var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
-                     status -> missCount.incrementAndGet())) {
+                     ReaderListeners.builder().onDeadlineMissed(status -> missCount.incrementAndGet()).build())) {
 
             Thread.sleep(1500); // Wait for discovery
 
@@ -421,7 +421,7 @@ class RtpsIntegrationTest {
 
         try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
              var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
-                     missEvents::add)) {
+                     ReaderListeners.builder().onDeadlineMissed(missEvents::add).build())) {
 
             Thread.sleep(1500); // Wait for discovery
 
@@ -465,7 +465,7 @@ class RtpsIntegrationTest {
 
         try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER);
              var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
-                     (Consumer<DeadlineMissedStatus>) null, livelinessEvents::add)) {
+                     ReaderListeners.builder().onLivelinessChanged(livelinessEvents::add).build())) {
 
             Thread.sleep(1500); // Wait for discovery
 
@@ -534,7 +534,7 @@ class RtpsIntegrationTest {
         List<LivelinessChangedStatus> livelinessEvents = new CopyOnWriteArrayList<>();
 
         try (var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER,
-                (Consumer<DeadlineMissedStatus>) null, livelinessEvents::add)) {
+                ReaderListeners.builder().onLivelinessChanged(livelinessEvents::add).build())) {
             // Create writer, send data, then close it
             try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER)) {
                 Thread.sleep(1500);

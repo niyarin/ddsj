@@ -26,6 +26,39 @@ class RtpsParticipantTest {
         return new LocalEndpoint(topic, "bytes", EndpointQos.DEFAULT);
     }
 
+    @Test void namedLivelinessCallbackWorksWithoutDeadlinePlaceholder() throws Exception {
+        var transport = new FakeTransport();
+        var events = new CopyOnWriteArrayList<LivelinessChangedStatus>();
+        var qos = new EndpointQos(EndpointQos.ReliabilityKind.BEST_EFFORT,
+                EndpointQos.DurabilityKind.VOLATILE, EndpointQos.HistoryKind.KEEP_LAST, 10,
+                EndpointQos.LivelinessKind.MANUAL_BY_TOPIC, java.time.Duration.ofSeconds(30));
+        var endpoint = new LocalEndpoint("one", "bytes", qos);
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var writer = participant.createWriter(endpoint, CODEC);
+            var reader = participant.createReader(endpoint, CODEC,
+                    ReaderListeners.builder().onLivelinessChanged(events::add).build());
+            writer.write(new byte[]{1});
+            transport.deliverLastUserPacket();
+            assertEquals(1, events.size());
+            assertEquals(writer.guid(), events.get(0).writerGuid());
+            assertTrue(events.get(0).alive());
+            assertEquals(1, reader.livelinessAliveCount());
+        }
+    }
+
+    @Test void nullListenersDoNotDamageParticipant() throws Exception {
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), new FakeTransport())) {
+            assertThrows(NullPointerException.class,
+                    () -> participant.createReader(endpoint("one"), CODEC, (ReaderListeners) null));
+            try (var reader = participant.createReader(endpoint("one"), CODEC, ReaderListeners.DEFAULT)) {
+                assertNotNull(reader.guid());
+            }
+        }
+        assertThrows(NullPointerException.class, () -> ReaderListeners.builder().onDeadlineMissed(null));
+        assertThrows(NullPointerException.class, () -> ReaderListeners.builder().onLivelinessChanged(null));
+        assertThrows(NullPointerException.class, () -> ReaderListeners.builder().onDeserializationError(null));
+    }
+
     @Test void sharedIdentityDistinctEndpointsAndOnlyOneReceiverPerChannel() throws Exception {
         var transport = new FakeTransport();
         try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
