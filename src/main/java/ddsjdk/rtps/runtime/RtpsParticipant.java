@@ -1,5 +1,6 @@
 package ddsjdk.rtps.runtime;
 
+import ddsjdk.rtps.util.Closeables;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.discovery.RemoteEndpointStore;
 import ddsjdk.rtps.discovery.RemoteParticipantStore;
@@ -84,18 +85,8 @@ public final class RtpsParticipant implements Closeable {
             scheduler.scheduleWithFixedDelay(this::announce, 1, 1, TimeUnit.SECONDS);
         } catch (IOException | RuntimeException e) {
             if (openedScheduler != null) openedScheduler.shutdownNow();
-            cleanupInitialization(e, opened);
+            Closeables.rollback(e, opened);
             throw e;
-        }
-    }
-
-    static void cleanupInitialization(Throwable failure, List<Closeable> opened) {
-        for (Closeable resource : opened.reversed()) {
-            try {
-                resource.close();
-            } catch (IOException | RuntimeException suppressed) {
-                failure.addSuppressed(suppressed);
-            }
         }
     }
 
@@ -207,13 +198,6 @@ public final class RtpsParticipant implements Closeable {
         resources.add(discoveryAcks);
         resources.add(discovery);
         resources.add(transport);
-        IOException failure = null;
-        for (Closeable resource : resources) {
-            try { resource.close(); } catch (IOException e) {
-                if (failure == null) failure = e;
-                else failure.addSuppressed(e);
-            }
-        }
-        if (failure != null) throw failure;
+        Closeables.closeAll(resources);
     }
 }

@@ -1,5 +1,6 @@
 package ddsjdk.rtps.message;
 
+import ddsjdk.rtps.util.Closeables;
 import ddsjdk.rtps.transport.RtpsPacket;
 import ddsjdk.rtps.transport.RtpsTransport;
 import ddsjdk.rtps.types.EntityId;
@@ -18,9 +19,9 @@ public final class AckNackListener implements Closeable {
     public AckNackListener(RtpsTransport transport, Set<EntityId> writerIds, Consumer<AckNack> onAckNack) throws IOException {
         this.writerIds = Set.copyOf(writerIds);
         this.onAckNack = onAckNack;
-        this.listeners = List.of(
-                transport.listenMetatraffic(this::handlePacket),
-                transport.listenUserData(this::handlePacket));
+        this.listeners = Closeables.openAll(
+                () -> transport.listenMetatraffic(this::handlePacket),
+                () -> transport.listenUserData(this::handlePacket));
     }
 
     private void handlePacket(RtpsPacket packet) {
@@ -31,20 +32,6 @@ public final class AckNackListener implements Closeable {
 
     @Override
     public void close() throws IOException {
-        IOException first = null;
-        for (Closeable listener : listeners) {
-            try {
-                listener.close();
-            } catch (IOException e) {
-                if (first == null) {
-                    first = e;
-                } else {
-                    first.addSuppressed(e);
-                }
-            }
-        }
-        if (first != null) {
-            throw first;
-        }
+        Closeables.closeAll(listeners);
     }
 }

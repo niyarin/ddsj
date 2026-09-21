@@ -1,5 +1,6 @@
 package ddsjdk.rtps.runtime;
 
+import ddsjdk.rtps.util.Closeables;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.discovery.RemoteParticipant;
@@ -156,7 +157,7 @@ public final class RtpsDataReader<T> implements Closeable {
             participant.register(guid(), endpoint, this, false);
             running.set(true);
         } catch (IOException | RuntimeException e) {
-            RtpsParticipant.cleanupInitialization(e, opened);
+            Closeables.rollback(e, opened);
             throw e;
         }
     }
@@ -410,31 +411,16 @@ public final class RtpsDataReader<T> implements Closeable {
             return;
         }
         notifyAll();
-        IOException first = null;
-        if (deadlineMonitor != null) {
-            deadlineMonitor.close();
-        }
-        if (livelinessMonitor != null) {
-            livelinessMonitor.close();
-        }
-        first = closeOrCapture(() -> participant.unregister(guid(), false), first);
-        first = closeOrCapture(userDataReader, first);
-        if (ownsParticipant) first = closeOrCapture(participant, first);
-        messages.clear();
-        if (first != null) {
-            throw first;
-        }
-    }
-
-    private static IOException closeOrCapture(Closeable closeable, IOException first) {
+        List<Closeable> resources = new ArrayList<>();
+        if (deadlineMonitor != null) resources.add(deadlineMonitor);
+        if (livelinessMonitor != null) resources.add(livelinessMonitor);
+        resources.add(() -> participant.unregister(guid(), false));
+        resources.add(userDataReader);
+        if (ownsParticipant) resources.add(participant);
         try {
-            closeable.close();
-        } catch (IOException e) {
-            if (first == null) {
-                return e;
-            }
-            first.addSuppressed(e);
+            Closeables.closeAll(resources);
+        } finally {
+            messages.clear();
         }
-        return first;
     }
 }

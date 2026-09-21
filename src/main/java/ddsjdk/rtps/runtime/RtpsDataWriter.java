@@ -1,5 +1,6 @@
 package ddsjdk.rtps.runtime;
 
+import ddsjdk.rtps.util.Closeables;
 import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
 import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
@@ -100,7 +101,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             participant.register(guid(), endpoint, this, true);
             running.set(true);
         } catch (IOException | RuntimeException e) {
-            RtpsParticipant.cleanupInitialization(e, opened);
+            Closeables.rollback(e, opened);
             throw e;
         }
     }
@@ -290,27 +291,16 @@ public final class RtpsDataWriter<T> implements Closeable {
         if (!running.compareAndSet(true, false)) {
             return;
         }
-        livelinessAsserter.close();
-        IOException first = null;
-        first = closeOrCapture(() -> participant.unregister(guid(), true), first);
-        first = closeOrCapture(nackFragListener, first);
-        first = closeOrCapture(ackNackListener, first);
-        if (ownsParticipant) first = closeOrCapture(participant, first);
-        history.clear();
-        if (first != null) {
-            throw first;
-        }
-    }
-
-    private static IOException closeOrCapture(Closeable closeable, IOException first) {
+        List<Closeable> resources = new ArrayList<>();
+        resources.add(livelinessAsserter);
+        resources.add(() -> participant.unregister(guid(), true));
+        resources.add(nackFragListener);
+        resources.add(ackNackListener);
+        if (ownsParticipant) resources.add(participant);
         try {
-            closeable.close();
-        } catch (IOException e) {
-            if (first == null) {
-                return e;
-            }
-            first.addSuppressed(e);
+            Closeables.closeAll(resources);
+        } finally {
+            history.clear();
         }
-        return first;
     }
 }

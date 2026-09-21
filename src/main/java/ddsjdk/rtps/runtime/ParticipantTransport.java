@@ -1,5 +1,6 @@
 package ddsjdk.rtps.runtime;
 
+import ddsjdk.rtps.util.Closeables;
 import ddsjdk.rtps.transport.RtpsPacket;
 import ddsjdk.rtps.transport.RtpsTransport;
 import ddsjdk.rtps.types.Locator;
@@ -8,6 +9,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -23,16 +25,14 @@ final class ParticipantTransport implements RtpsTransport {
 
     ParticipantTransport(RtpsTransport delegate) throws IOException {
         this.delegate = delegate;
-        Closeable meta = null;
+        List<Closeable> opened = new ArrayList<>();
+        opened.add(delegate);
         try {
-            meta = delegate.listenMetatraffic(packet -> dispatch(metaHandlers, packet));
+            metaReceiver = delegate.listenMetatraffic(packet -> dispatch(metaHandlers, packet));
+            opened.add(metaReceiver);
             userReceiver = delegate.listenUserData(packet -> dispatch(userHandlers, packet));
-            metaReceiver = meta;
         } catch (IOException | RuntimeException e) {
-            if (meta != null) {
-                try { meta.close(); } catch (IOException suppressed) { e.addSuppressed(suppressed); }
-            }
-            try { delegate.close(); } catch (IOException suppressed) { e.addSuppressed(suppressed); }
+            Closeables.rollback(e, opened);
             throw e;
         }
     }
@@ -68,13 +68,6 @@ final class ParticipantTransport implements RtpsTransport {
         if (!closed.compareAndSet(false, true)) return;
         metaHandlers.clear();
         userHandlers.clear();
-        IOException failure = null;
-        for (Closeable resource : List.of(metaReceiver, userReceiver, delegate)) {
-            try { resource.close(); } catch (IOException e) {
-                if (failure == null) failure = e;
-                else failure.addSuppressed(e);
-            }
-        }
-        if (failure != null) throw failure;
+        Closeables.closeAll(List.of(metaReceiver, userReceiver, delegate));
     }
 }
