@@ -229,6 +229,71 @@ class ReaderReceiveApiTest {
         }
     }
 
+    @Test void finiteQosTracksStatusWithoutCallbacks() throws Exception {
+        var transport = new FakeTransport();
+        try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
+                monitoredEndpoint(), CODEC, transport)) {
+            assertEquals(0, reader.deadlineMissedCount());
+            assertEquals(0, reader.livelinessAliveCount());
+            transport.deliverData(1);
+            awaitCondition(() -> reader.deadlineMissedCount() > 0
+                    && reader.livelinessNotAliveCount() == 1);
+            assertEquals(0, reader.livelinessAliveCount());
+            assertEquals(List.of(1), reader.drain());
+        }
+    }
+
+    @Test void finiteQosStillNotifiesCallbacks() throws Exception {
+        var transport = new FakeTransport();
+        var deadlines = new CopyOnWriteArrayList<DeadlineMonitor.DeadlineMissedStatus>();
+        var liveliness = new CopyOnWriteArrayList<LivelinessMonitor.LivelinessChangedStatus>();
+        try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
+                monitoredEndpoint(), CODEC, transport, deadlines::add, liveliness::add)) {
+            transport.deliverData(1);
+            awaitCondition(() -> !deadlines.isEmpty()
+                    && liveliness.stream().anyMatch(status -> !status.alive()));
+            assertTrue(reader.deadlineMissedCount() >= deadlines.get(0).totalCount());
+            assertTrue(liveliness.get(0).alive());
+            assertEquals(PREFIX.toGuid(RtpsEntity.USER_WRITER_NO_KEY), liveliness.get(0).writerGuid());
+            assertEquals(1, reader.livelinessNotAliveCount());
+            assertEquals(0, reader.livelinessAliveCount());
+        }
+    }
+
+    @Test void infiniteQosDoesNotMonitorEvenWithCallbacks() throws Exception {
+        var transport = new FakeTransport();
+        var deadlines = new CopyOnWriteArrayList<DeadlineMonitor.DeadlineMissedStatus>();
+        var liveliness = new CopyOnWriteArrayList<LivelinessMonitor.LivelinessChangedStatus>();
+        try (var reader = new RtpsDataReader<>(new RtpsParticipantConfig(0),
+                new LocalEndpoint("topic", "int", EndpointQos.DEFAULT), CODEC,
+                transport, deadlines::add, liveliness::add)) {
+            transport.deliverData(1);
+            assertEquals(0, reader.deadlineMissedCount());
+            assertEquals(0, reader.livelinessAliveCount());
+            assertEquals(0, reader.livelinessNotAliveCount());
+            assertTrue(deadlines.isEmpty());
+            assertTrue(liveliness.isEmpty());
+        }
+    }
+
+    private static LocalEndpoint monitoredEndpoint() {
+        return new LocalEndpoint("topic", "int", new EndpointQos(
+                EndpointQos.ReliabilityKind.BEST_EFFORT, EndpointQos.DurabilityKind.VOLATILE,
+                EndpointQos.HistoryKind.KEEP_LAST, 10, Duration.ofMillis(50),
+                EndpointQos.OwnershipKind.SHARED, 0, EndpointQos.LivelinessKind.AUTOMATIC,
+                Duration.ofMillis(50)));
+    }
+
+    private static void awaitCondition(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long start = System.nanoTime();
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() - start > TimeUnit.SECONDS.toNanos(3)) {
+                fail("Monitoring status did not change before timeout");
+            }
+            Thread.sleep(5);
+        }
+    }
+
     private static void awaitWaiting(Thread thread) {
         long start = System.nanoTime();
         while (thread.getState() != Thread.State.TIMED_WAITING) {

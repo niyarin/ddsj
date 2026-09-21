@@ -27,7 +27,7 @@ public final class LivelinessMonitor implements Closeable {
      * Creates a liveliness monitor.
      *
      * @param leaseDuration the lease duration for writers
-     * @param onLivelinessChanged callback invoked when a writer's liveliness changes
+     * @param onLivelinessChanged callback invoked when a writer's liveliness changes; null disables notifications only
      */
     public LivelinessMonitor(Duration leaseDuration, Consumer<LivelinessChangedStatus> onLivelinessChanged) {
         this.leaseDuration = leaseDuration;
@@ -116,6 +116,9 @@ public final class LivelinessMonitor implements Closeable {
     }
 
     private void notifyChange(Guid writerGuid, boolean alive) {
+        if (onLivelinessChanged == null) {
+            return;
+        }
         try {
             onLivelinessChanged.accept(new LivelinessChangedStatus(
                     writerGuid, alive, aliveCount.get(), notAliveCount.get()));

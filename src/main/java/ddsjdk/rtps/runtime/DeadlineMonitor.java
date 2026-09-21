@@ -25,7 +25,7 @@ public final class DeadlineMonitor implements Closeable {
      * Creates a deadline monitor.
      *
      * @param deadline the deadline duration
-     * @param onDeadlineMissed callback invoked when deadline is missed
+     * @param onDeadlineMissed callback invoked when deadline is missed; null disables notifications only
      */
     public DeadlineMonitor(Duration deadline, Consumer<DeadlineMissedStatus> onDeadlineMissed) {
         this.deadline = deadline;
@@ -87,10 +87,12 @@ public final class DeadlineMonitor implements Closeable {
                     // Reset the timer to avoid repeated immediate callbacks
                     lastActivityTime.set(now);
 
-                    try {
-                        onDeadlineMissed.accept(new DeadlineMissedStatus(missedCount, deadline));
-                    } catch (RuntimeException ignored) {
-                        // Don't let callback exceptions kill the monitor thread
+                    if (onDeadlineMissed != null) {
+                        try {
+                            onDeadlineMissed.accept(new DeadlineMissedStatus(missedCount, deadline));
+                        } catch (RuntimeException ignored) {
+                            // Don't let callback exceptions kill the monitor thread
+                        }
                     }
                 }
             } catch (InterruptedException e) {

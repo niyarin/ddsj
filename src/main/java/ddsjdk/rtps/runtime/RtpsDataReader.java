@@ -125,7 +125,7 @@ public final class RtpsDataReader<T> implements Closeable {
             opened.add(userDataReader);
 
             // Initialize deadline monitor if deadline is finite
-            if (endpoint.qos().hasFiniteDeadline() && onDeadlineMissed != null) {
+            if (endpoint.qos().hasFiniteDeadline()) {
                 this.deadlineMonitor = new DeadlineMonitor(endpoint.qos().deadline(), onDeadlineMissed);
                 opened.add(deadlineMonitor);
             } else {
@@ -133,7 +133,7 @@ public final class RtpsDataReader<T> implements Closeable {
             }
 
             // Initialize liveliness monitor if lease duration is finite
-            if (endpoint.qos().hasFiniteLeaseDuration() && onLivelinessChanged != null) {
+            if (endpoint.qos().hasFiniteLeaseDuration()) {
                 this.livelinessMonitor = new LivelinessMonitor(endpoint.qos().leaseDuration(), onLivelinessChanged);
                 opened.add(livelinessMonitor);
             } else {
@@ -270,21 +270,24 @@ public final class RtpsDataReader<T> implements Closeable {
     }
 
     /**
-     * Returns the total number of deadline misses, or 0 if no deadline is configured.
+     * Returns the total number of deadline misses, independently of callback registration.
+     * Returns 0 if the deadline is infinite.
      */
     public long deadlineMissedCount() {
         return deadlineMonitor != null ? deadlineMonitor.totalMissedCount() : 0;
     }
 
     /**
-     * Returns the number of currently alive writers, or 0 if no liveliness monitoring is configured.
+     * Returns the number of currently alive writers, independently of callback registration.
+     * Returns 0 if the lease duration is infinite.
      */
     public long livelinessAliveCount() {
         return livelinessMonitor != null ? livelinessMonitor.aliveCount() : 0;
     }
 
     /**
-     * Returns the number of writers that became not alive, or 0 if no liveliness monitoring is configured.
+     * Returns the number of writers that became not alive, independently of callback registration.
+     * Returns 0 if the lease duration is infinite.
      */
     public long livelinessNotAliveCount() {
         return livelinessMonitor != null ? livelinessMonitor.notAliveCount() : 0;
