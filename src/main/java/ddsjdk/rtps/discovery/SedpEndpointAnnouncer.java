@@ -2,8 +2,6 @@ package ddsjdk.rtps.discovery;
 
 import ddsjdk.rtps.message.AckNack;
 import ddsjdk.rtps.message.RtpsMessageBuilder;
-import ddsjdk.rtps.parameter.RtpsParameterLists;
-import ddsjdk.rtps.protocol.ParameterId;
 import ddsjdk.rtps.protocol.RtpsEntity;
 import ddsjdk.rtps.transport.RtpsTransport;
 import ddsjdk.rtps.types.EntityId;
@@ -35,14 +33,7 @@ public final class SedpEndpointAnnouncer {
     }
 
     public synchronized void register(Guid guid, LocalEndpoint endpoint) {
-        byte[] payload = RtpsParameterLists.payload(writer -> {
-            writer.stringParameter(ParameterId.TOPIC_NAME, endpoint.topicName());
-            writer.stringParameter(ParameterId.TYPE_NAME, endpoint.typeName());
-            writer.parameter(ParameterId.PROTOCOL_VERSION, new byte[]{2, 5, 0, 0});
-            writer.parameter(ParameterId.VENDOR_ID, new byte[]{1, 16, 0, 0});
-            RtpsQosParameters.write(writer, endpoint.qos());
-            writer.parameter(ParameterId.ENDPOINT_GUID, guid.bytes());
-        });
+        byte[] payload = SedpAnnouncements.payload(guid, endpoint);
         changes.put(guid, new Change(guid, ++sequence, payload));
     }
 
@@ -83,10 +74,7 @@ public final class SedpEndpointAnnouncer {
     }
 
     private void send(byte[] bytes) throws IOException {
-        transport.sendMetatraffic(bytes);
-        for (RemoteParticipant participant : participants) {
-            for (var locator : participant.metatrafficUnicast()) transport.send(bytes, locator);
-        }
+        SedpAnnouncements.send(transport, participants, bytes);
     }
 
     private record Change(Guid guid, long sequence, byte[] payload) { }
