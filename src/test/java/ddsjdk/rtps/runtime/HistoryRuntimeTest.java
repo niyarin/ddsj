@@ -86,12 +86,25 @@ class HistoryRuntimeTest {
             assertFalse(transport.sent.stream().flatMap(bytes -> new RtpsMessageParser(bytes, bytes.length).submessages().stream()).anyMatch(s -> s.kind() == RtpsSubmessageKind.DATA_FRAG));
         }
     }
+    @Test void writePropagatesSameIOExceptionForCompleteAndFragmentedPayloads() throws Exception {
+        var transport = new FakeTransport();
+        try (var writer = new RtpsDataWriter<>(new RtpsParticipantConfig(0), endpoint(KEEP_LAST, 1, 2), CODEC, transport)) {
+            IOException failure = new IOException("transport failed");
+            transport.sendFailure = failure;
+            assertSame(failure, assertThrows(IOException.class, () -> writer.write(new byte[1])));
+            assertSame(failure, assertThrows(IOException.class, () -> writer.write(new byte[65000])));
+        }
+    }
     private static final class FakeTransport implements RtpsTransport {
+        private volatile IOException sendFailure;
         private final List<PacketHandler> handlers = new CopyOnWriteArrayList<>();
         private final List<byte[]> sent = new CopyOnWriteArrayList<>();
         public InetAddress multicastGroup() { return InetAddress.getLoopbackAddress(); }
         public void sendMetatraffic(byte[] message) {}
-        public void sendUserData(byte[] message) { sent.add(message.clone()); }
+        public void sendUserData(byte[] message) throws IOException {
+            if (sendFailure != null) throw sendFailure;
+            sent.add(message.clone());
+        }
         public void send(byte[] message, InetSocketAddress address) {}
         public Closeable listenMetatraffic(PacketHandler handler) { return () -> {}; }
         public Closeable listenUserData(PacketHandler handler) {

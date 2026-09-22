@@ -4,7 +4,9 @@ import ddsjdk.rtps.types.EntityId;
 import ddsjdk.rtps.types.GuidPrefix;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -120,6 +122,40 @@ class FragmentSenderTest {
 
         assertFalse(success);
         assertTrue(messages.isEmpty());
+    }
+
+    @Test
+    void sendFragmentedPropagatesFailureAndStopsSending() {
+        FragmentSender sender = new FragmentSender(100, 50);
+        IOException failure = new IOException("send failed");
+        List<byte[]> attempted = new ArrayList<>();
+
+        IOException actual = assertThrows(IOException.class, () -> sender.sendFragmented(
+                GUID_PREFIX, READER_ID, WRITER_ID, 1L, new byte[250], message -> {
+                    attempted.add(message);
+                    if (attempted.size() == 2) throw failure;
+                }));
+
+        assertSame(failure, actual);
+        assertEquals(2, attempted.size());
+    }
+
+    @Test
+    void resendFragmentsPropagatesFailureAndStopsSending() {
+        FragmentSender sender = new FragmentSender(100, 50, history::get);
+        history.put(1L, new byte[250]);
+        IOException failure = new IOException("resend failed");
+        List<byte[]> attempted = new ArrayList<>();
+
+        IOException actual = assertThrows(IOException.class, () -> sender.resendFragments(
+                GUID_PREFIX, READER_ID, WRITER_ID, 1L,
+                new LinkedHashSet<>(List.of(1, 2, 3)), message -> {
+                    attempted.add(message);
+                    if (attempted.size() == 2) throw failure;
+                }));
+
+        assertSame(failure, actual);
+        assertEquals(2, attempted.size());
     }
 
     @Test

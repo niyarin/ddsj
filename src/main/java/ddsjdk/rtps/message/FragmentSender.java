@@ -10,12 +10,17 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
 /**
  * Handles fragmenting large payloads into DATA_FRAG submessages.
  */
 public final class FragmentSender {
+    /** Sends a built RTPS message, propagating transport failures to the caller. */
+    @FunctionalInterface
+    public interface MessageSender {
+        void send(byte[] message) throws IOException;
+    }
+
     /** Default fragment size (1024 bytes, conservative for UDP) */
     public static final int DEFAULT_FRAGMENT_SIZE = 1024;
 
@@ -61,6 +66,7 @@ public final class FragmentSender {
      * @param sequenceNumber the sample's sequence number
      * @param payload the full payload to fragment
      * @param sender callback to send each built message
+     * @throws IOException if sending fails; remaining fragments are not sent
      */
     public void sendFragmented(
             GuidPrefix guidPrefix,
@@ -68,7 +74,7 @@ public final class FragmentSender {
             EntityId writerId,
             long sequenceNumber,
             byte[] payload,
-            Consumer<byte[]> sender) throws IOException {
+            MessageSender sender) throws IOException {
 
         int sampleSize = payload.length;
         int totalFragments = (sampleSize + fragmentSize - 1) / fragmentSize;
@@ -78,7 +84,7 @@ public final class FragmentSender {
             byte[] fragMessage = buildFragmentMessage(
                     guidPrefix, readerId, writerId, sequenceNumber,
                     fragNum, payload, sampleSize);
-            sender.accept(fragMessage);
+            sender.send(fragMessage);
         }
     }
 
@@ -86,6 +92,7 @@ public final class FragmentSender {
      * Resends specific fragments for a sequence number.
      *
      * @return true if fragments were sent, false if sample not found
+     * @throws IOException if sending fails; remaining fragments are not sent
      */
     public boolean resendFragments(
             GuidPrefix guidPrefix,
@@ -93,7 +100,7 @@ public final class FragmentSender {
             EntityId writerId,
             long sequenceNumber,
             Set<Integer> fragmentNumbers,
-            Consumer<byte[]> sender) throws IOException {
+            MessageSender sender) throws IOException {
 
         FragmentedSample sample = lookup(sequenceNumber);
         if (sample == null) {
@@ -107,7 +114,7 @@ public final class FragmentSender {
             byte[] fragMessage = buildFragmentMessage(
                     guidPrefix, readerId, writerId, sequenceNumber,
                     fragNum, sample.payload, sample.payload.length);
-            sender.accept(fragMessage);
+            sender.send(fragMessage);
         }
         return true;
     }

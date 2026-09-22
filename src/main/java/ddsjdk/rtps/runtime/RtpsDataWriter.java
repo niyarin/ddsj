@@ -162,13 +162,7 @@ public final class RtpsDataWriter<T> implements Closeable {
                     entityId,
                     nackFrag.writerSequenceNumber(),
                     nackFrag.requestedFragmentNumbers(),
-                    msg -> {
-                        try {
-                            sendToUserLocators(msg);
-                        } catch (IOException e) {
-                            throw new UncheckedIOException(e);
-                        }
-                    });
+                    this::sendToUserLocators);
             if (!resent && history.get(nackFrag.writerSequenceNumber()).isEmpty()) {
                 sendGap(nackFrag.readerId(), nackFrag.writerSequenceNumber());
             }
@@ -213,13 +207,7 @@ public final class RtpsDataWriter<T> implements Closeable {
                 entityId,
                 sequenceNumber,
                 payload,
-                msg -> {
-                    try {
-                        sendToUserLocators(msg);
-                    } catch (IOException e) {
-                        throw new UncheckedIOException(e);
-                    }
-                });
+                this::sendToUserLocators);
     }
 
     private void sendUserHeartbeat() throws IOException {
