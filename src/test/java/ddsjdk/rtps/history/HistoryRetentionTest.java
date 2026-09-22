@@ -1,6 +1,6 @@
 package ddsjdk.rtps.history;
 
-import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
+import ddsjdk.rtps.qos.EndpointQos.HistoryKind;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 

@@ -1,5 +1,6 @@
 package ddsjdk.rtps.discovery;
 
+import ddsjdk.rtps.qos.EndpointQos;
 import ddsjdk.rtps.message.*;
 import ddsjdk.rtps.protocol.RtpsEntity;
 import ddsjdk.rtps.protocol.RtpsSubmessageKind;

@@ -1,9 +1,10 @@
-package ddsjdk.rtps.discovery;
+package ddsjdk.rtps.qos;
 
+import ddsjdk.rtps.discovery.RtpsQosParameters;
 import ddsjdk.rtps.parameter.RtpsParameterLists;
 import org.junit.jupiter.api.Test;
 import java.time.Duration;
-import static ddsjdk.rtps.discovery.EndpointQos.*;
+import static ddsjdk.rtps.qos.EndpointQos.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EndpointQosBuilderTest {

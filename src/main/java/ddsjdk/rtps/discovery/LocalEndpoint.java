@@ -1,5 +1,6 @@
 package ddsjdk.rtps.discovery;
 
+import ddsjdk.rtps.qos.EndpointQos;
 import ddsjdk.rtps.history.ResourceLimits;
 
 public record LocalEndpoint(String topicName, String typeName, EndpointQos qos, ResourceLimits resourceLimits) {

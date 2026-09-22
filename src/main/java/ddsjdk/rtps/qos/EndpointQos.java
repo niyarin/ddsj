@@ -1,4 +1,4 @@
-package ddsjdk.rtps.discovery;
+package ddsjdk.rtps.qos;
 
 import java.time.Duration;
 import java.util.Objects;

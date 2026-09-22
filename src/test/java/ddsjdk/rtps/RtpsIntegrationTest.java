@@ -1,9 +1,9 @@
 package ddsjdk.rtps;
 
-import ddsjdk.rtps.discovery.EndpointQos;
-import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
-import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
-import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
+import ddsjdk.rtps.qos.EndpointQos;
+import ddsjdk.rtps.qos.EndpointQos.DurabilityKind;
+import ddsjdk.rtps.qos.EndpointQos.LivelinessKind;
+import ddsjdk.rtps.qos.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.runtime.DeadlineMissedStatus;
 import ddsjdk.rtps.runtime.LivelinessChangedStatus;

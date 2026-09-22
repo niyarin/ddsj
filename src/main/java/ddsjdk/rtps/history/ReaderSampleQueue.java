@@ -1,6 +1,6 @@
 package ddsjdk.rtps.history;
 
-import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
+import ddsjdk.rtps.qos.EndpointQos.HistoryKind;
 import java.util.ArrayDeque;
 import java.util.Objects;
 

@@ -1,6 +1,6 @@
 package ddsjdk.rtps.runtime;
 
-import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
+import ddsjdk.rtps.qos.EndpointQos.LivelinessKind;
 
 import java.io.Closeable;
 import java.time.Duration;

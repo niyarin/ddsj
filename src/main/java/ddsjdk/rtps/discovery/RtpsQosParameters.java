@@ -1,9 +1,10 @@
 package ddsjdk.rtps.discovery;
 
-import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
-import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
-import ddsjdk.rtps.discovery.EndpointQos.OwnershipKind;
-import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
+import ddsjdk.rtps.qos.EndpointQos;
+import ddsjdk.rtps.qos.EndpointQos.DurabilityKind;
+import ddsjdk.rtps.qos.EndpointQos.HistoryKind;
+import ddsjdk.rtps.qos.EndpointQos.OwnershipKind;
+import ddsjdk.rtps.qos.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.parameter.RtpsParameterList;
 import ddsjdk.rtps.parameter.RtpsParameterListWriter;
 import ddsjdk.rtps.protocol.ParameterId;

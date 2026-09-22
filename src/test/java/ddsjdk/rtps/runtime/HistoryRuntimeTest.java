@@ -1,6 +1,6 @@
 package ddsjdk.rtps.runtime;
 
-import ddsjdk.rtps.discovery.EndpointQos;
+import ddsjdk.rtps.qos.EndpointQos;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.history.ResourceLimits;
 import ddsjdk.rtps.message.RtpsMessageBuilder;
@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import static org.junit.jupiter.api.Assertions.*;
-import static ddsjdk.rtps.discovery.EndpointQos.HistoryKind.*;
+import static ddsjdk.rtps.qos.EndpointQos.HistoryKind.*;
 
 class HistoryRuntimeTest {
     private static final GuidPrefix PREFIX = new GuidPrefix(new byte[12]);

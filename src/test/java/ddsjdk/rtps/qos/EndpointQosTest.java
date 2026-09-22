@@ -1,9 +1,9 @@
-package ddsjdk.rtps.discovery;
+package ddsjdk.rtps.qos;
 
-import ddsjdk.rtps.discovery.EndpointQos.DurabilityKind;
-import ddsjdk.rtps.discovery.EndpointQos.HistoryKind;
-import ddsjdk.rtps.discovery.EndpointQos.OwnershipKind;
-import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
+import ddsjdk.rtps.qos.EndpointQos.DurabilityKind;
+import ddsjdk.rtps.qos.EndpointQos.HistoryKind;
+import ddsjdk.rtps.qos.EndpointQos.OwnershipKind;
+import ddsjdk.rtps.qos.EndpointQos.ReliabilityKind;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

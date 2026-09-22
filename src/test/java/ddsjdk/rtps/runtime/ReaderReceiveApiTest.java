@@ -1,6 +1,6 @@
 package ddsjdk.rtps.runtime;
 
-import ddsjdk.rtps.discovery.EndpointQos;
+import ddsjdk.rtps.qos.EndpointQos;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.message.RtpsMessageBuilder;
 import ddsjdk.rtps.protocol.RtpsEntity;

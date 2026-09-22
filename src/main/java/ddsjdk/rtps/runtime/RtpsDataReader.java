@@ -1,12 +1,9 @@
 package ddsjdk.rtps.runtime;
 
 import ddsjdk.rtps.util.Closeables;
-import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
+import ddsjdk.rtps.qos.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.discovery.RemoteParticipant;
-import ddsjdk.rtps.discovery.RemoteParticipantStore;
-import ddsjdk.rtps.discovery.RemoteEndpointStore;
-import ddsjdk.rtps.discovery.RemotePublication;
 import ddsjdk.rtps.history.ReaderHistoryCache;
 import ddsjdk.rtps.history.ReaderSampleQueue;
 import ddsjdk.rtps.message.Heartbeat;
@@ -24,7 +21,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -50,8 +46,7 @@ public final class RtpsDataReader<T> implements Closeable {
     private volatile Consumer<DeserializationError> onDeserializationError = ignored -> { };
     private final ReaderHistoryCache history = new ReaderHistoryCache();
     private final AtomicLong ackNackCount = new AtomicLong(1);
-    private final RemoteParticipantStore remoteParticipants;
-    private final RemoteEndpointStore<RemotePublication> remotePublications;
+    private final EndpointResolver endpointResolver;
     private final RtpsUserDataReader userDataReader;
     private final DeadlineMonitor deadlineMonitor;
     private final LivelinessMonitor livelinessMonitor;
@@ -129,8 +124,8 @@ public final class RtpsDataReader<T> implements Closeable {
         try {
             this.entityId = participant.allocateEntityId(false);
             this.guidPrefix = participant.guidPrefix();
-            this.remoteParticipants = participant.remoteParticipants();
-            this.remotePublications = participant.publications();
+            this.endpointResolver = new EndpointResolver(endpoint, participant.remoteParticipants(),
+                    participant.publications(), participant.subscriptions());
             this.endpoint = endpoint;
             this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
             this.serializer = serializer;
@@ -311,7 +306,7 @@ public final class RtpsDataReader<T> implements Closeable {
         if (!running.get()) {
             return;
         }
-        if (!isMatchedOrUndiscoveredPublication(sample.writerGuid())) {
+        if (!endpointResolver.acceptsPublication(sample.writerGuid(), ownsParticipant)) {
             return;
         }
         if (history.contains(sample)) {
@@ -351,7 +346,7 @@ public final class RtpsDataReader<T> implements Closeable {
         if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
             return;
         }
-        if (!isMatchedOrUndiscoveredPublication(heartbeat.writerGuid())) {
+        if (!endpointResolver.acceptsPublication(heartbeat.writerGuid(), ownsParticipant)) {
             return;
         }
         var missing = history.missingSequences(heartbeat);
@@ -371,35 +366,11 @@ public final class RtpsDataReader<T> implements Closeable {
                 missingSequenceNumbers,
                 (int) ackNackCount.getAndIncrement());
         transport.sendUserData(message.bytes());
-        for (RemoteParticipant participant : remoteParticipantsForMatchedPublication(writerGuid)) {
+        for (RemoteParticipant participant : endpointResolver.participantsForPublication(writerGuid, ownsParticipant)) {
             for (var locator : participant.userUnicast()) {
                 transport.send(message.bytes(), locator);
             }
         }
-    }
-
-    private boolean isMatchedOrUndiscoveredPublication(Guid writerGuid) {
-        var publication = remotePublications.get(writerGuid);
-        if (publication.isEmpty()) {
-            return ownsParticipant;
-        }
-        RemotePublication remote = publication.get();
-        return remote.topicName().equals(endpoint.topicName())
-                && remote.typeName().equals(endpoint.typeName())
-                && remote.qos().isCompatibleWithRequested(endpoint.qos());
-    }
-
-    private Set<RemoteParticipant> remoteParticipantsForMatchedPublication(Guid writerGuid) {
-        if (!isMatchedOrUndiscoveredPublication(writerGuid)) {
-            return Set.of();
-        }
-        Set<RemoteParticipant> result = new HashSet<>();
-        for (RemoteParticipant participant : remoteParticipants) {
-            if (participant.guidPrefix().equals(writerGuid.prefix())) {
-                result.add(participant);
-            }
-        }
-        return result;
     }
 
     /** Identity allocated by the owning participant. */

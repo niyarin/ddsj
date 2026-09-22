@@ -1,13 +1,10 @@
 package ddsjdk.rtps.runtime;
 
 import ddsjdk.rtps.util.Closeables;
-import ddsjdk.rtps.discovery.EndpointQos.LivelinessKind;
-import ddsjdk.rtps.discovery.EndpointQos.ReliabilityKind;
+import ddsjdk.rtps.qos.EndpointQos.LivelinessKind;
+import ddsjdk.rtps.qos.EndpointQos.ReliabilityKind;
 import ddsjdk.rtps.discovery.LocalEndpoint;
 import ddsjdk.rtps.discovery.RemoteParticipant;
-import ddsjdk.rtps.discovery.RemoteParticipantStore;
-import ddsjdk.rtps.discovery.RemoteEndpointStore;
-import ddsjdk.rtps.discovery.RemoteSubscription;
 import ddsjdk.rtps.history.WriterHistoryCache;
 import ddsjdk.rtps.message.AckNack;
 import ddsjdk.rtps.message.AckNackListener;
@@ -28,7 +25,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,8 +43,7 @@ public final class RtpsDataWriter<T> implements Closeable {
     private final AtomicLong userSequence = new AtomicLong(1);
     private final AtomicLong userHeartbeatCount = new AtomicLong(1);
     private final WriterHistoryCache history;
-    private final RemoteParticipantStore remoteParticipants;
-    private final RemoteEndpointStore<RemoteSubscription> remoteSubscriptions;
+    private final EndpointResolver endpointResolver;
     private final AckNackListener ackNackListener;
     private final NackFragListener nackFragListener;
     private final FragmentSender fragmentSender;
@@ -76,8 +71,8 @@ public final class RtpsDataWriter<T> implements Closeable {
         try {
             this.entityId = participant.allocateEntityId(true);
             this.guidPrefix = participant.guidPrefix();
-            this.remoteParticipants = participant.remoteParticipants();
-            this.remoteSubscriptions = participant.subscriptions();
+            this.endpointResolver = new EndpointResolver(endpoint, participant.remoteParticipants(),
+                    participant.publications(), participant.subscriptions());
             this.endpoint = endpoint;
             this.serializer = serializer;
             this.transport = participant.transport();
@@ -243,32 +238,11 @@ public final class RtpsDataWriter<T> implements Closeable {
 
     private void sendToUserLocators(byte[] message) throws IOException {
         transport.sendUserData(message);
-        for (RemoteParticipant participant : remoteParticipantsForMatchedSubscriptions()) {
+        for (RemoteParticipant participant : endpointResolver.participantsForSubscriptions()) {
             for (var locator : participant.userUnicast()) {
                 transport.send(message, locator);
             }
         }
-    }
-
-    private Set<RemoteParticipant> remoteParticipantsForMatchedSubscriptions() {
-        Set<GuidPrefix> matchedPrefixes = new HashSet<>();
-        for (RemoteSubscription subscription : remoteSubscriptions) {
-            if (subscription.topicName().equals(endpoint.topicName())
-                    && subscription.typeName().equals(endpoint.typeName())
-                    && endpoint.qos().isCompatibleWithRequested(subscription.qos())) {
-                matchedPrefixes.add(subscription.endpointGuid().prefix());
-            }
-        }
-        if (matchedPrefixes.isEmpty()) {
-            return Set.of();
-        }
-        Set<RemoteParticipant> result = new HashSet<>();
-        for (RemoteParticipant participant : remoteParticipants) {
-            if (matchedPrefixes.contains(participant.guidPrefix())) {
-                result.add(participant);
-            }
-        }
-        return result;
     }
 
     /** Identity allocated by the owning participant. */
