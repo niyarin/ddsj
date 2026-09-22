@@ -40,17 +40,19 @@ public final class RtpsUserDataReader implements Closeable {
             Consumer<UserDataSample> onSample,
             Consumer<Heartbeat> onHeartbeat,
             Consumer<HeartbeatFrag> onHeartbeatFrag) {
+        // Share packet framing and context while preserving delivery order by message kind.
+        var submessages = new RtpsMessageParser(packet.data(), packet.length()).submessages();
         // Handle complete DATA samples
-        RtpsUserDataParser.readUserSamples(packet.data(), packet.length(), localReaderId).forEach(onSample);
+        RtpsUserDataParser.readUserSamples(submessages, localReaderId).forEach(onSample);
 
         // Handle DATA_FRAG and assemble
-        for (DataFragment fragment : RtpsUserDataParser.readDataFragments(packet.data(), packet.length(), localReaderId)) {
+        for (DataFragment fragment : RtpsUserDataParser.readDataFragments(submessages, localReaderId)) {
             fragmentAssembler.addFragment(fragment).ifPresent(onSample);
         }
 
         // Handle heartbeats
-        RtpsUserDataParser.readHeartbeats(packet.data(), packet.length(), localReaderId).forEach(onHeartbeat);
-        RtpsUserDataParser.readHeartbeatFrags(packet.data(), packet.length(), localReaderId).forEach(onHeartbeatFrag);
+        RtpsUserDataParser.readHeartbeats(submessages, localReaderId).forEach(onHeartbeat);
+        RtpsUserDataParser.readHeartbeatFrags(submessages, localReaderId).forEach(onHeartbeatFrag);
     }
 
     /**

@@ -24,8 +24,12 @@ public final class RtpsUserDataParser {
     }
 
     public static List<UserDataSample> readUserSamples(byte[] packet, int length, EntityId expectedReaderId) {
+        return readUserSamples(new RtpsMessageParser(packet, length).submessages(), expectedReaderId);
+    }
+
+    static List<UserDataSample> readUserSamples(List<RtpsSubmessage> submessages, EntityId expectedReaderId) {
         List<UserDataSample> result = new ArrayList<>();
-        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+        for (RtpsSubmessage submessage : submessages) {
             if (submessage.kind() == RtpsSubmessageKind.DATA) {
                 parseUserDataSubmessage(
                         submessage.sourceGuidPrefix(),
@@ -39,8 +43,12 @@ public final class RtpsUserDataParser {
     }
 
     public static List<Heartbeat> readHeartbeats(byte[] packet, int length, EntityId expectedReaderId) {
+        return readHeartbeats(new RtpsMessageParser(packet, length).submessages(), expectedReaderId);
+    }
+
+    static List<Heartbeat> readHeartbeats(List<RtpsSubmessage> submessages, EntityId expectedReaderId) {
         List<Heartbeat> result = new ArrayList<>();
-        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+        for (RtpsSubmessage submessage : submessages) {
             if (submessage.kind() == RtpsSubmessageKind.HEARTBEAT) {
                 parseHeartbeat(
                         submessage.sourceGuidPrefix(),
@@ -53,8 +61,12 @@ public final class RtpsUserDataParser {
     }
 
     public static List<DataFragment> readDataFragments(byte[] packet, int length, EntityId expectedReaderId) {
+        return readDataFragments(new RtpsMessageParser(packet, length).submessages(), expectedReaderId);
+    }
+
+    static List<DataFragment> readDataFragments(List<RtpsSubmessage> submessages, EntityId expectedReaderId) {
         List<DataFragment> result = new ArrayList<>();
-        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+        for (RtpsSubmessage submessage : submessages) {
             if (submessage.kind() == RtpsSubmessageKind.DATA_FRAG) {
                 parseDataFragmentSubmessage(
                         submessage.sourceGuidPrefix(),
@@ -68,8 +80,12 @@ public final class RtpsUserDataParser {
     }
 
     public static List<HeartbeatFrag> readHeartbeatFrags(byte[] packet, int length, EntityId expectedReaderId) {
+        return readHeartbeatFrags(new RtpsMessageParser(packet, length).submessages(), expectedReaderId);
+    }
+
+    static List<HeartbeatFrag> readHeartbeatFrags(List<RtpsSubmessage> submessages, EntityId expectedReaderId) {
         List<HeartbeatFrag> result = new ArrayList<>();
-        for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
+        for (RtpsSubmessage submessage : submessages) {
             if (submessage.kind() == RtpsSubmessageKind.HEARTBEAT_FRAG) {
                 parseHeartbeatFrag(
                         submessage.sourceGuidPrefix(),
