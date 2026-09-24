@@ -1,6 +1,8 @@
 package ddsjdk.rtps.discovery;
 
 import ddsjdk.rtps.qos.EndpointQos;
+import ddsjdk.rtps.parameter.RtpsParameterList;
+import ddsjdk.rtps.protocol.ParameterId;
 import ddsjdk.rtps.message.*;
 import ddsjdk.rtps.protocol.RtpsEntity;
 import ddsjdk.rtps.protocol.RtpsSubmessageKind;
@@ -51,6 +53,7 @@ class SedpAnnouncerCompatibilityTest {
         byte[] original = transport.last();
         var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).getFirst();
         assertEquals(1, sample.sequenceNumber());
+        assertUserUnicastLocator(sample.payload(), transport.userUnicastLocator());
         var discovered = publication
                 ? RtpsDiscoveryReader.readRemotePublication(original, original.length).orElseThrow()
                 : RtpsDiscoveryReader.readRemoteSubscription(original, original.length).orElseThrow();
@@ -93,6 +96,32 @@ class SedpAnnouncerCompatibilityTest {
             assertArrayEquals(transport.meta.get(i), transport.unicast.get(i));
             assertEquals(locator.socketAddress(), transport.addresses.get(i));
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void sharedAnnouncerAdvertisesUserUnicastLocatorAndRetainsItForResend(boolean publication) throws Exception {
+        var transport = new RecordingTransport();
+        EntityId reader = publication ? RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_READER : RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_READER;
+        EntityId writer = publication ? RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER : RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_WRITER;
+        Guid guid = prefix.toGuid(publication ? RtpsEntity.USER_WRITER_NO_KEY : RtpsEntity.USER_READER_NO_KEY);
+        var announcer = new SedpEndpointAnnouncer(transport, prefix, List.of(), publication);
+        announcer.register(guid, endpoint);
+        announcer.announce();
+        byte[] original = transport.meta.getFirst();
+        var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).getFirst();
+        assertUserUnicastLocator(sample.payload(), transport.userUnicastLocator());
+        announcer.respondTo(new AckNack(reader, writer, Set.of(1L), 1));
+        assertArrayEquals(original, transport.last());
+    }
+
+    private static void assertUserUnicastLocator(byte[] payload, Locator expected) {
+        var parameters = RtpsParameterList.read(payload, true).orElseThrow();
+        // DDSI-RTPS 2.5 tables 9.18/9.19: endpoint locators use PID_UNICAST_LOCATOR.
+        var locators = parameters.get(0x002f);
+        assertEquals(1, locators.size());
+        assertEquals(expected, Locator.fromParameterValue(locators.getFirst(), true).orElseThrow());
+        assertTrue(parameters.get(ParameterId.DEFAULT_UNICAST_LOCATOR).isEmpty());
     }
 
     @FunctionalInterface private interface Action { void run() throws IOException; }

@@ -33,7 +33,7 @@ public final class SedpEndpointAnnouncer {
     }
 
     public synchronized void register(Guid guid, LocalEndpoint endpoint) {
-        byte[] payload = SedpAnnouncements.payload(guid, endpoint);
+        byte[] payload = SedpAnnouncements.payload(guid, endpoint, transport);
         changes.put(guid, new Change(guid, ++sequence, payload));
     }
 

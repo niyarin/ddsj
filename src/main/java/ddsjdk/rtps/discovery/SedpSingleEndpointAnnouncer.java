@@ -67,7 +67,7 @@ final class SedpSingleEndpointAnnouncer {
     }
 
     private byte[] endpointPayload() {
-        return SedpAnnouncements.payload(guidPrefix.toGuid(endpointId), endpoint);
+        return SedpAnnouncements.payload(guidPrefix.toGuid(endpointId), endpoint, transport);
     }
 
     private byte[] historyMessage() {

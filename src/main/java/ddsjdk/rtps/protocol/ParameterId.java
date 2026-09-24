@@ -11,6 +11,7 @@ public final class ParameterId {
     public static final int RELIABILITY = 0x001a;
     public static final int DURABILITY = 0x001d;
     public static final int HISTORY = 0x0040;
+    public static final int UNICAST_LOCATOR = 0x002f;
     public static final int DEFAULT_UNICAST_LOCATOR = 0x0031;
     public static final int METATRAFFIC_UNICAST_LOCATOR = 0x0032;
     public static final int METATRAFFIC_MULTICAST_LOCATOR = 0x0033;

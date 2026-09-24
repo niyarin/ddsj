@@ -31,12 +31,14 @@ public final class RtpsQosParameters {
         writer.parameter(
                 ParameterId.HISTORY,
                 concat(RtpsIo.intLe(rtpsKind(qos.history())), RtpsIo.intLe(qos.depth())));
-        // Deadline: Duration as {seconds, nanoseconds fraction}
-        writer.parameter(
-                ParameterId.DEADLINE,
-                concat(
-                        RtpsIo.intLe((int) qos.deadline().getSeconds()),
-                        RtpsIo.intLe(qos.deadline().getNano())));
+        // Omit infinite deadlines: the receiver uses the DDS default (infinite).
+        if (qos.hasFiniteDeadline()) {
+            writer.parameter(
+                    ParameterId.DEADLINE,
+                    concat(
+                            RtpsIo.intLe((int) qos.deadline().getSeconds()),
+                            RtpsIo.intLe(qos.deadline().getNano())));
+        }
         // Ownership
         writer.int32Parameter(ParameterId.OWNERSHIP, rtpsKind(qos.ownership()));
         writer.int32Parameter(ParameterId.OWNERSHIP_STRENGTH, qos.ownershipStrength());
