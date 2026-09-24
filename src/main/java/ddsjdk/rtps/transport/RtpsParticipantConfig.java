@@ -24,7 +24,7 @@ public record RtpsParticipantConfig(
         this(domainId, defaultMulticastGroup(), Optional.ofNullable(networkInterface), 0);
     }
 
-    private static InetAddress defaultMulticastGroup() {
+    public static InetAddress defaultMulticastGroup() {
         try {
             return InetAddress.getByName(DEFAULT_MULTICAST_ADDRESS);
         } catch (UnknownHostException e) {

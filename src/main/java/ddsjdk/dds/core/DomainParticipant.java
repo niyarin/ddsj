@@ -57,11 +57,17 @@ public final class DomainParticipant implements Entity<DomainParticipantListener
 
     DomainParticipant(int domainId, DomainParticipantQos qos) throws IOException {
         this.domainId = domainId;
-        this.qos = new AtomicReference<>(qos != null ? qos : DomainParticipantQos.DEFAULT);
+        DomainParticipantQos effectiveQos = qos != null ? qos : DomainParticipantQos.DEFAULT;
+        this.qos = new AtomicReference<>(effectiveQos);
         this.instanceHandle = InstanceHandle.of(HANDLE_COUNTER.getAndIncrement());
         this.statusCondition = new StatusCondition(this);
 
-        RtpsParticipantConfig config = new RtpsParticipantConfig(domainId);
+        RtpsParticipantConfig config = new RtpsParticipantConfig(
+                domainId,
+                RtpsParticipantConfig.defaultMulticastGroup(),
+                effectiveQos.networkInterface(),
+                effectiveQos.participantIndex()
+        );
         this.rtpsParticipant = new RtpsParticipant(config);
     }
 
