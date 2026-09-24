@@ -71,17 +71,7 @@ public interface TypeSupport<T> {
         return null;
     }
 
-    /**
-     * Registers this type with the participant.
-     *
-     * @param participant the participant
-     * @param typeName the type name to register
-     * @return OK if successful
-     */
-    default ReturnCode registerType(DomainParticipant participant, String typeName) {
-        // Default implementation does nothing; participant manages type registry
-        return ReturnCode.OK;
-    }
+    // registerType will be added when DomainParticipant is available
 
     /**
      * Creates a TypeSupport from a PayloadSerializer.
