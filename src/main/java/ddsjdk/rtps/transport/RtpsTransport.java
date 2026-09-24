@@ -24,6 +24,9 @@ public interface RtpsTransport extends Closeable {
 
     Closeable listenUserData(PacketHandler onPacket) throws IOException;
 
+    /** The local unicast locator on which this transport receives user data. */
+    Locator userUnicastLocator();
+
     Locator unicastLocator(int port);
 
     Locator multicastLocator(int port);

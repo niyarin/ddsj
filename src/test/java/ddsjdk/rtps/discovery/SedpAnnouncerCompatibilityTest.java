@@ -109,6 +109,7 @@ class SedpAnnouncerCompatibilityTest {
         public void sendUserData(byte[] bytes) { fail("unexpected user data send"); }
         public Closeable listenMetatraffic(PacketHandler handler) { throw new UnsupportedOperationException(); }
         public Closeable listenUserData(PacketHandler handler) { throw new UnsupportedOperationException(); }
+        public Locator userUnicastLocator() { return unicastLocator(7411); }
         public Locator unicastLocator(int port) { return new Locator(multicastGroup(), port); }
         public Locator multicastLocator(int port) { return unicastLocator(port); }
         public void close() { }

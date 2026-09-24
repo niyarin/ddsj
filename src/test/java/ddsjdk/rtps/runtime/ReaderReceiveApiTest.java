@@ -353,6 +353,7 @@ class ReaderReceiveApiTest {
         public Closeable listenUserData(PacketHandler handler) {
             handlers.add(handler); return () -> handlers.remove(handler);
         }
+        public Locator userUnicastLocator() { return unicastLocator(7411); }
         public Locator unicastLocator(int port) { return new Locator(multicastGroup(), port); }
         public Locator multicastLocator(int port) { return unicastLocator(port); }
         public void close() { handlers.clear(); }

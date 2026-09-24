@@ -67,6 +67,7 @@ class ListenerResourceTest {
         public void sendMetatraffic(byte[] message) { }
         public void sendUserData(byte[] message) { }
         public void send(byte[] message, InetSocketAddress address) { }
+        public Locator userUnicastLocator() { return unicastLocator(7411); }
         public Locator unicastLocator(int port) { return new Locator(multicastGroup(), port); }
         public Locator multicastLocator(int port) { return unicastLocator(port); }
         public void close() { transportClosed++; }

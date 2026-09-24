@@ -27,6 +27,13 @@ class RtpsParticipantTest {
         return new LocalEndpoint(topic, "bytes", EndpointQos.DEFAULT);
     }
 
+    @Test void sharedTransportPreservesUserUnicastLocator() throws Exception {
+        var delegate = new FakeTransport();
+        try (var transport = new ParticipantTransport(delegate)) {
+            assertEquals(delegate.userUnicastLocator(), transport.userUnicastLocator());
+        }
+    }
+
     @Test void namedLivelinessCallbackWorksWithoutDeadlinePlaceholder() throws Exception {
         var transport = new FakeTransport();
         var events = new CopyOnWriteArrayList<LivelinessChangedStatus>();
@@ -267,6 +274,7 @@ class RtpsParticipantTest {
             userHandlers.add(handler);
             return () -> { userHandlers.remove(handler); receiverCloseCount++; };
         }
+        public Locator userUnicastLocator() { return unicastLocator(7411); }
         public Locator unicastLocator(int port) { return new Locator(multicastGroup(), port); }
         public Locator multicastLocator(int port) { return unicastLocator(port); }
         public void close() { closeCount++; }

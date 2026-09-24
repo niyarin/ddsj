@@ -75,6 +75,11 @@ public final class UdpRtpsTransport implements RtpsTransport {
     }
 
     @Override
+    public Locator userUnicastLocator() {
+        return unicastLocator(RtpsPort.userUnicast(config.domainId(), config.participantIndex()));
+    }
+
+    @Override
     public Locator unicastLocator(int port) {
         return new Locator(localAddress, port);
     }

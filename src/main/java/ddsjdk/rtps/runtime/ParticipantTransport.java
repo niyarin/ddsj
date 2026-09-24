@@ -54,6 +54,7 @@ final class ParticipantTransport implements RtpsTransport {
         delegate.sendUserData(message);
     }
     public void send(byte[] message, InetSocketAddress address) throws IOException { delegate.send(message, address); }
+    public Locator userUnicastLocator() { return delegate.userUnicastLocator(); }
     public Locator unicastLocator(int port) { return delegate.unicastLocator(port); }
     public Locator multicastLocator(int port) { return delegate.multicastLocator(port); }
     public Closeable listenMetatraffic(PacketHandler handler) {

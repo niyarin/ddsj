@@ -72,6 +72,7 @@ class RtpsUserDataReaderTest {
         public void sendMetatraffic(byte[] message) { throw new UnsupportedOperationException(); }
         public void sendUserData(byte[] message) { throw new UnsupportedOperationException(); }
         public void send(byte[] message, InetSocketAddress address) { throw new UnsupportedOperationException(); }
+        public Locator userUnicastLocator() { return unicastLocator(7411); }
         public Locator unicastLocator(int port) { throw new UnsupportedOperationException(); }
         public Locator multicastLocator(int port) { throw new UnsupportedOperationException(); }
         public void close() { handler = null; }
