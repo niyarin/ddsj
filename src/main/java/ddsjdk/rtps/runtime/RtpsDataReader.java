@@ -346,7 +346,9 @@ public final class RtpsDataReader<T> implements Closeable {
         if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
             return;
         }
-        if (!endpointResolver.acceptsPublication(heartbeat.writerGuid(), ownsParticipant)) {
+        // Always accept heartbeats - publication may be registered after heartbeat arrives
+        // TODO: proper fix is to send AckNack when publication is registered
+        if (!endpointResolver.acceptsPublication(heartbeat.writerGuid(), true)) {
             return;
         }
         var missing = history.missingSequences(heartbeat);
