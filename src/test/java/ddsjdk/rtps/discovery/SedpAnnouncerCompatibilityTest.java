@@ -51,7 +51,7 @@ class SedpAnnouncerCompatibilityTest {
         // Retransmission also works before the first periodic announcement.
         respond.accept(new AckNack(reader, writer, Set.of(1L), 1));
         byte[] original = transport.last();
-        var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).getFirst();
+        var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).get(0);
         assertEquals(1, sample.sequenceNumber());
         assertUserUnicastLocator(sample.payload(), transport.userUnicastLocator());
         var discovered = publication
@@ -69,9 +69,9 @@ class SedpAnnouncerCompatibilityTest {
             byte[] packet = transport.last();
             assertEquals(List.of(RtpsSubmessageKind.DATA, RtpsSubmessageKind.HEARTBEAT),
                     new RtpsMessageParser(packet, packet.length).submessages().stream().map(RtpsSubmessage::kind).toList());
-            var heartbeat = RtpsUserDataParser.readHeartbeats(packet, packet.length, reader).getFirst();
+            var heartbeat = RtpsUserDataParser.readHeartbeats(packet, packet.length, reader).get(0);
             assertEquals(new Heartbeat(reader, prefix.toGuid(writer), 1, 1, count), heartbeat);
-            assertArrayEquals(sample.payload(), RtpsUserDataParser.readUserSamples(packet, packet.length, reader).getFirst().payload());
+            assertArrayEquals(sample.payload(), RtpsUserDataParser.readUserSamples(packet, packet.length, reader).get(0).payload());
         }
 
         dispose.run();
@@ -90,7 +90,7 @@ class SedpAnnouncerCompatibilityTest {
         assertArrayEquals(gap.bytes(), transport.last());
         announce.run();
         byte[] packet = transport.last();
-        assertEquals(1, RtpsUserDataParser.readUserSamples(packet, packet.length, reader).getFirst().sequenceNumber());
+        assertEquals(1, RtpsUserDataParser.readUserSamples(packet, packet.length, reader).get(0).sequenceNumber());
         assertEquals(transport.meta.size(), transport.unicast.size());
         for (int i = 0; i < transport.meta.size(); i++) {
             assertArrayEquals(transport.meta.get(i), transport.unicast.get(i));
@@ -108,8 +108,8 @@ class SedpAnnouncerCompatibilityTest {
         var announcer = new SedpEndpointAnnouncer(transport, prefix, List.of(), publication);
         announcer.register(guid, endpoint);
         announcer.announce();
-        byte[] original = transport.meta.getFirst();
-        var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).getFirst();
+        byte[] original = transport.meta.get(0);
+        var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).get(0);
         assertUserUnicastLocator(sample.payload(), transport.userUnicastLocator());
         announcer.respondTo(new AckNack(reader, writer, Set.of(1L), 1));
         assertArrayEquals(original, transport.last());
@@ -120,7 +120,7 @@ class SedpAnnouncerCompatibilityTest {
         // DDSI-RTPS 2.5 tables 9.18/9.19: endpoint locators use PID_UNICAST_LOCATOR.
         var locators = parameters.get(0x002f);
         assertEquals(1, locators.size());
-        assertEquals(expected, Locator.fromParameterValue(locators.getFirst(), true).orElseThrow());
+        assertEquals(expected, Locator.fromParameterValue(locators.get(0), true).orElseThrow());
         assertTrue(parameters.get(ParameterId.DEFAULT_UNICAST_LOCATOR).isEmpty());
     }
 
@@ -131,7 +131,7 @@ class SedpAnnouncerCompatibilityTest {
         final List<byte[]> meta = new ArrayList<>();
         final List<byte[]> unicast = new ArrayList<>();
         final List<InetSocketAddress> addresses = new ArrayList<>();
-        byte[] last() { return meta.getLast(); }
+        byte[] last() { return meta.get(meta.size() - 1); }
         public InetAddress multicastGroup() { return InetAddress.getLoopbackAddress(); }
         public void sendMetatraffic(byte[] bytes) { meta.add(bytes.clone()); }
         public void send(byte[] bytes, InetSocketAddress address) { unicast.add(bytes.clone()); addresses.add(address); }

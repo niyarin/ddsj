@@ -212,8 +212,8 @@ class RtpsParticipantTest {
             transport.deliverUser(ack.bytes());
             var samples = transport.userSent.stream().flatMap(b -> RtpsUserDataParser.readUserSamples(b, b.length, RtpsEntity.UNKNOWN).stream()).toList();
             assertEquals(1, samples.size());
-            assertEquals(second.guid(), samples.getFirst().writerGuid());
-            assertArrayEquals(new byte[]{2}, samples.getFirst().payload());
+            assertEquals(second.guid(), samples.get(0).writerGuid());
+            assertArrayEquals(new byte[]{2}, samples.get(0).payload());
         }
     }
 
@@ -278,7 +278,7 @@ class RtpsParticipantTest {
         public Locator unicastLocator(int port) { return new Locator(multicastGroup(), port); }
         public Locator multicastLocator(int port) { return unicastLocator(port); }
         public void close() { closeCount++; }
-        void deliverLastUserPacket() { deliverUser(userSent.getLast()); }
+        void deliverLastUserPacket() { deliverUser(userSent.get(userSent.size() - 1)); }
         void deliverUser(byte[] bytes) { userHandlers.forEach(h -> h.handle(new RtpsPacket(bytes, bytes.length))); }
         void deliverMeta(byte[] bytes) { metaHandlers.forEach(h -> h.handle(new RtpsPacket(bytes, bytes.length))); }
     }

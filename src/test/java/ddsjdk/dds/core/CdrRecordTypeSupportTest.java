@@ -165,7 +165,7 @@ class CdrRecordTypeSupportTest {
         byte[] packet = message.bytes();
         var samples = ddsjdk.rtps.message.RtpsUserDataParser.readUserSamples(packet, packet.length, reader);
         assertEquals(1, samples.size());
-        assertEquals(new Message(1, "Hi"), TypeSupport.forCdrRecord(Message.class).deserialize(samples.getFirst().payload()));
+        assertEquals(new Message(1, "Hi"), TypeSupport.forCdrRecord(Message.class).deserialize(samples.get(0).payload()));
         assertEquals(1, ddsjdk.rtps.message.RtpsUserDataParser.readHeartbeats(packet, packet.length, reader).size());
     }
 

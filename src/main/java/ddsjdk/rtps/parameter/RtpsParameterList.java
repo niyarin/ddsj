@@ -34,7 +34,7 @@ public final class RtpsParameterList {
         if (values == null || values.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(values.getFirst().clone());
+        return Optional.of(values.get(0).clone());
     }
 
     public Optional<String> firstString(int id, boolean littleEndian) {

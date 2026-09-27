@@ -3,6 +3,7 @@ package ddsjdk.rtps.util;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public final class Closeables {
@@ -25,7 +26,9 @@ public final class Closeables {
     }
 
     public static void rollback(Throwable failure, List<? extends Closeable> opened) {
-        closeAndCapture(failure, opened.reversed());
+        var reversed = new ArrayList<>(opened);
+        Collections.reverse(reversed);
+        closeAndCapture(failure, reversed);
     }
 
     public static void closeAll(Iterable<? extends Closeable> resources) throws IOException {

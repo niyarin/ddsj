@@ -118,7 +118,7 @@ public final class RtpsMessageBuilder {
         Integer maxMissing = missingFragmentNumbers.stream().max(Integer::compareTo).orElse(null);
         Integer minMissing = missingFragmentNumbers.stream().min(Integer::compareTo).orElse(null);
         int bitmapBase = minMissing == null ? 1 : minMissing;
-        int numBits = maxMissing == null ? 0 : Math.clamp(maxMissing - bitmapBase + 1, 0, 256);
+        int numBits = maxMissing == null ? 0 : Math.max(0, Math.min(maxMissing - bitmapBase + 1, 256));
 
         body.writeBytes(RtpsIo.intLe(bitmapBase));
         body.writeBytes(RtpsIo.intLe(numBits));
@@ -158,7 +158,7 @@ public final class RtpsMessageBuilder {
         body.writeBytes(RtpsIo.intLe((int) baseSequenceNumber));
 
         Long maxMissing = missingSequenceNumbers.stream().max(Long::compareTo).orElse(null);
-        int numBits = maxMissing == null ? 0 : Math.clamp(maxMissing - baseSequenceNumber + 1, 0, 256);
+        int numBits = maxMissing == null ? 0 : (int) Math.max(0L, Math.min(maxMissing - baseSequenceNumber + 1, 256L));
         body.writeBytes(RtpsIo.intLe(numBits));
         int wordCount = (numBits + 31) / 32;
         for (int wordIndex = 0; wordIndex < wordCount; wordIndex++) {
