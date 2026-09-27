@@ -60,6 +60,24 @@ try (var participant = factory.createParticipant(0, qos)) {
 }
 ```
 
+## Add DDSJDK to Maven or Gradle
+
+To add a dependency using Maven:
+```xml
+<dependency>
+    <groupId>io.github.niyarin</groupId>
+    <artifactId>ddsjdk</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+To add a dependency using Gradle:
+```gradle
+dependencies {
+    implementation 'io.github.niyarin:ddsjdk:0.1.0'
+}
+```
+
 ## Test
 
 Run tests, a specific test class.
