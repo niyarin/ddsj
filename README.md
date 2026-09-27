@@ -1,4 +1,4 @@
-# DDSJDK
+# DDSJ
 
 A DDS-RTPS implementation written in pure Java.
 
@@ -60,21 +60,21 @@ try (var participant = factory.createParticipant(0, qos)) {
 }
 ```
 
-## Add DDSJDK to Maven or Gradle
+## Add DDSJ to Maven or Gradle
 
 To add a dependency using Maven:
 ```xml
 <dependency>
     <groupId>io.github.niyarin</groupId>
-    <artifactId>ddsjdk</artifactId>
-    <version>0.1.0</version>
+    <artifactId>ddsj</artifactId>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 To add a dependency using Gradle:
 ```gradle
 dependencies {
-    implementation 'io.github.niyarin:ddsjdk:0.1.0'
+    implementation 'io.github.niyarin:ddsj:0.2.0'
 }
 ```
 

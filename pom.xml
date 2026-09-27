@@ -5,13 +5,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.github.niyarin</groupId>
-    <artifactId>ddsjdk</artifactId>
-    <version>0.1.2-SNAPSHOT</version>
+    <artifactId>ddsj</artifactId>
+    <version>0.2.0</version>
     <packaging>jar</packaging>
 
-    <name>DDSJDK</name>
+    <name>DDSJ</name>
     <description>A DDS-RTPS implementation written in pure Java.</description>
-    <url>https://github.com/niyarin/ddsjdk</url>
+    <url>https://github.com/niyarin/ddsj</url>
 
     <licenses>
         <license>
@@ -30,9 +30,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:https://github.com/niyarin/ddsjdk.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/niyarin/ddsjdk.git</developerConnection>
-        <url>https://github.com/niyarin/ddsjdk</url>
+        <connection>scm:git:https://github.com/niyarin/ddsj.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/niyarin/ddsj.git</developerConnection>
+        <url>https://github.com/niyarin/ddsj</url>
     </scm>
 
     <properties>
