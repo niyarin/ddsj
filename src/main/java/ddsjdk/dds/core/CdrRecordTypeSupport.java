@@ -1,0 +1,176 @@
+package ddsjdk.dds.core;
+
+import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.RecordComponent;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
+
+/** Plain XCDR1 record codec. Alignment is relative to the end of the encapsulation header. */
+final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
+    private static final ClassValue<CdrRecordTypeSupport<?>> CACHE = new ClassValue<>() {
+        @Override protected CdrRecordTypeSupport<?> computeValue(Class<?> type) {
+            if (!type.isRecord()) throw new IllegalArgumentException("Not a record: " + type.getName());
+            return new CdrRecordTypeSupport<>(type.asSubclass(Record.class));
+        }
+    };
+
+    @SuppressWarnings("unchecked")
+    static <T extends Record> TypeSupport<T> of(Class<T> type) {
+        return (TypeSupport<T>) CACHE.get(Objects.requireNonNull(type, "type"));
+    }
+
+    private final Class<T> type;
+    private final Constructor<T> constructor;
+    private final Class<?>[] types;
+    private final Method[] accessors;
+
+    private CdrRecordTypeSupport(Class<T> type) {
+        this.type = type;
+        RecordComponent[] components = type.getRecordComponents();
+        types = new Class<?>[components.length];
+        accessors = new Method[components.length];
+        try {
+            for (int i = 0; i < components.length; i++) {
+                types[i] = components[i].getType();
+                if (!types[i].isPrimitive() && types[i] != String.class) {
+                    throw new IllegalArgumentException("Unsupported CDR component: " + components[i]);
+                }
+                accessors[i] = components[i].getAccessor();
+                if (!accessors[i].trySetAccessible()) {
+                    throw new IllegalArgumentException("Inaccessible record component: " + components[i]);
+                }
+            }
+            constructor = type.getDeclaredConstructor(types);
+            if (!constructor.trySetAccessible()) {
+                throw new IllegalArgumentException("Inaccessible record constructor: " + type.getName());
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalArgumentException("Cannot inspect record: " + type.getName(), e);
+        }
+    }
+
+    @Override public String getTypeName() { return type.getName(); }
+    @Override public Class<T> getType() { return type; }
+
+    @Override public byte[] serialize(T value) {
+        Objects.requireNonNull(value, "value");
+        try {
+            var out = new ByteArrayOutputStream();
+            for (int i = 0; i < types.length; i++) {
+                Class<?> t = types[i];
+                Object v = accessors[i].invoke(value);
+                int width = alignment(t);
+                while (out.size() % width != 0) out.write(0);
+                if (t == String.class) {
+                    String text = (String) Objects.requireNonNull(v, "Null String component: " + accessors[i].getName());
+                    if (text.indexOf('\0') >= 0) throw new IllegalArgumentException("CDR strings cannot contain NUL");
+                    ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
+                            .onMalformedInput(CodingErrorAction.REPORT).encode(CharBuffer.wrap(text));
+                    writeNumber(out, (long) encoded.remaining() + 1, 4);
+                    while (encoded.hasRemaining()) out.write(encoded.get());
+                    out.write(0);
+                } else {
+                    long bits;
+                    if (t == boolean.class) bits = (boolean) v ? 1 : 0;
+                    else if (t == char.class) {
+                        bits = (char) v;
+                        if (bits > 255) throw new IllegalArgumentException("CDR char must fit in 8 bits");
+                    } else if (t == float.class) bits = Float.floatToRawIntBits((float) v);
+                    else if (t == double.class) bits = Double.doubleToRawLongBits((double) v);
+                    else bits = ((Number) v).longValue();
+                    writeNumber(out, bits, width);
+                }
+            }
+            int padding = (-out.size()) & 3;
+            var payload = new ByteArrayOutputStream();
+            payload.writeBytes(new byte[]{0, 1, 0, (byte) padding}); // CDR_LE, trailing padding count
+            payload.writeBytes(out.toByteArray());
+            for (int i = 0; i < padding; i++) payload.write(0);
+            return payload.toByteArray();
+        } catch (ReflectiveOperationException | CharacterCodingException e) {
+            throw new IllegalArgumentException("Cannot serialize " + type.getName(), e);
+        }
+    }
+
+    @Override public T deserialize(byte[] data) {
+        Objects.requireNonNull(data, "data");
+        try {
+            if (data.length < 4 || data[0] != 0 || (data[1] != 0 && data[1] != 1)) {
+                throw new IllegalArgumentException("Expected CDR_BE or CDR_LE encapsulation");
+            }
+            if (data[2] != 0 || (data[3] & 0xfc) != 0) {
+                throw new IllegalArgumentException("Unsupported CDR encapsulation options");
+            }
+            int padding = data[3] & 3;
+            if (padding > data.length - 4 || (padding != 0 && data.length % 4 != 0)) {
+                throw new IllegalArgumentException("Invalid CDR padding");
+            }
+            for (int i = data.length - padding; i < data.length; i++) {
+                if (data[i] != 0) throw new IllegalArgumentException("Invalid CDR padding");
+            }
+            var in = ByteBuffer.wrap(data, 4, data.length - 4 - padding).slice()
+                    .order(data[1] == 1 ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+            Object[] values = new Object[types.length];
+            for (int i = 0; i < types.length; i++) {
+                Class<?> t = types[i];
+                int skip = (-in.position()) & (alignment(t) - 1);
+                if (skip > in.remaining()) throw new IllegalArgumentException("Truncated CDR alignment");
+                in.position(in.position() + skip);
+                if (t == boolean.class) {
+                    byte b = in.get();
+                    if (b != 0 && b != 1) throw new IllegalArgumentException("Invalid CDR boolean");
+                    values[i] = b == 1;
+                } else if (t == byte.class) values[i] = in.get();
+                else if (t == char.class) values[i] = (char) Byte.toUnsignedInt(in.get());
+                else if (t == short.class) values[i] = in.getShort();
+                else if (t == int.class) values[i] = in.getInt();
+                else if (t == long.class) values[i] = in.getLong();
+                else if (t == float.class) values[i] = in.getFloat();
+                else if (t == double.class) values[i] = in.getDouble();
+                else {
+                    int length = in.getInt();
+                    if (length < 1 || length > in.remaining()) throw new IllegalArgumentException("Invalid CDR string length");
+                    int end = in.position() + length - 1;
+                    if (in.get(end) != 0) throw new IllegalArgumentException("Missing CDR string terminator");
+                    ByteBuffer text = in.slice();
+                    text.limit(length - 1);
+                    String decoded = StandardCharsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT).decode(text).toString();
+                    if (decoded.indexOf('\0') >= 0) throw new IllegalArgumentException("CDR strings cannot contain NUL");
+                    values[i] = decoded;
+                    in.position(end + 1);
+                }
+            }
+            // Older RTPS senders may append alignment bytes without setting the options count.
+            if (in.hasRemaining()) {
+                if (padding != 0 || in.remaining() > 3 || data.length % 4 != 0) {
+                    throw new IllegalArgumentException("Trailing CDR payload bytes");
+                }
+                while (in.hasRemaining()) {
+                    if (in.get() != 0) throw new IllegalArgumentException("Invalid CDR padding");
+                }
+            }
+            return constructor.newInstance(values);
+        } catch (ReflectiveOperationException | CharacterCodingException | java.nio.BufferUnderflowException e) {
+            throw new IllegalArgumentException("Cannot deserialize " + type.getName(), e);
+        }
+    }
+
+    private static int alignment(Class<?> type) {
+        if (type == boolean.class || type == byte.class || type == char.class) return 1;
+        if (type == short.class) return 2;
+        if (type == long.class || type == double.class) return 8;
+        return 4;
+    }
+
+    private static void writeNumber(ByteArrayOutputStream out, long bits, int width) {
+        for (int i = 0; i < width; i++) out.write((int) (bits >>> (i * 8)));
+    }
+}

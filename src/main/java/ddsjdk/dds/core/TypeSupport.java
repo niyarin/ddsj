@@ -82,6 +82,42 @@ public interface TypeSupport<T> {
     }
 
     /**
+     * Creates cached, unkeyed plain CDR (XCDR1) support for a record.
+     * Components are encoded in declaration order with CDR alignment. Serialization
+     * includes a CDR_LE encapsulation header; deserialization accepts CDR_LE and CDR_BE.
+     * Primitives map to their IDL counterparts: byte to octet, short to short,
+     * int to long, long to long long, and char to an 8-bit IDL char (0..255).
+     * Strings use UTF-8 with a length including the terminating NUL. Null strings,
+     * embedded NULs, invalid Unicode, and non-primitive/non-String components are rejected.
+     * The discovery type name is the record's binary class name. Both endpoints must
+     * use the same schema. Nested records, arrays, keys, and XCDR2 are not supported.
+     * Use with {@code participant.createTopic(name, MyRecord.class, TypeSupport.forCdrRecord(MyRecord.class))}.
+     */
+    static <T extends Record> TypeSupport<T> forCdrRecord(Class<T> type) {
+        return CdrRecordTypeSupport.of(type);
+    }
+
+    /**
+     * Creates unkeyed CDR record support with an explicit DDS discovery type name.
+     * The name is used verbatim; ROS message names are not converted to DDS names.
+     * Encoding and supported components are the same as {@link #forCdrRecord(Class)}.
+     * Record metadata is shared with the cached default support.
+     *
+     * @param type the record class
+     * @param typeName the exact type name advertised in DDS discovery
+     */
+    static <T extends Record> TypeSupport<T> forCdrRecord(Class<T> type, String typeName) {
+        Objects.requireNonNull(typeName, "typeName");
+        TypeSupport<T> codec = forCdrRecord(type);
+        return new TypeSupport<>() {
+            @Override public String getTypeName() { return typeName; }
+            @Override public Class<T> getType() { return codec.getType(); }
+            @Override public byte[] serialize(T value) { return codec.serialize(value); }
+            @Override public T deserialize(byte[] data) { return codec.deserialize(data); }
+        };
+    }
+
+    /**
      * Creates a TypeSupport from a PayloadSerializer.
      * <p>
      * This is a convenience method for adapting RTPS serializers to DDS TypeSupport.
