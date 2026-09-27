@@ -20,6 +20,8 @@ class CdrRecordTypeSupportTest {
     record Unsupported(Integer value) {}
     record Nested(Message value) {}
     record ArrayValue(byte[] value) {}
+    record FixedArray(@CdrFixedLength(4) byte[] uuid) {}
+    record MixedArrays(@CdrFixedLength(2) byte[] prefix, byte[] data, @CdrFixedLength(4) byte[] suffix) {}
     record Empty() {}
     record Validated(int value) {
         Validated { if (value < 0) throw new IllegalArgumentException("negative"); }
@@ -114,7 +116,7 @@ class CdrRecordTypeSupportTest {
     @Test void rejectsInvalidComponentsAndValues() {
         assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(Unsupported.class));
         assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(Nested.class));
-        assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(ArrayValue.class));
+        // ArrayValue is now valid since byte[] is supported
         assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(Record.class));
         assertThrows(NullPointerException.class, () -> TypeSupport.forCdrRecord(null));
         var support = TypeSupport.forCdrRecord(Message.class);
@@ -173,5 +175,68 @@ class CdrRecordTypeSupportTest {
         var support = TypeSupport.forCdrRecord(Empty.class);
         assertArrayEquals(hex("00010000"), support.serialize(new Empty()));
         assertEquals(new Empty(), support.deserialize(hex("00000000")));
+    }
+
+    @Test void encodesVariableLengthByteArrayWithLengthPrefix() {
+        var support = TypeSupport.forCdrRecord(ArrayValue.class);
+        byte[] data = new byte[]{1, 2, 3, 4, 5};
+        var value = new ArrayValue(data);
+        byte[] expected = hex("00010003 05000000 01020304 05000000");
+        assertArrayEquals(expected, support.serialize(value));
+        var deserialized = support.deserialize(expected);
+        assertArrayEquals(data, deserialized.value());
+        // Empty array
+        assertArrayEquals(hex("00010000 00000000"), support.serialize(new ArrayValue(new byte[0])));
+        assertEquals(0, support.deserialize(hex("00010000 00000000")).value().length);
+    }
+
+    @Test void encodesFixedLengthByteArrayWithoutPrefix() {
+        var support = TypeSupport.forCdrRecord(FixedArray.class);
+        byte[] data = new byte[]{0x01, 0x02, 0x03, 0x04};
+        var value = new FixedArray(data);
+        // Fixed length array has no length prefix, just raw bytes
+        byte[] expected = hex("00010000 01020304");
+        assertArrayEquals(expected, support.serialize(value));
+        var deserialized = support.deserialize(expected);
+        assertArrayEquals(data, deserialized.uuid());
+    }
+
+    @Test void rejectsFixedArrayLengthMismatch() {
+        var support = TypeSupport.forCdrRecord(FixedArray.class);
+        // Wrong length - expects 4 bytes
+        assertThrows(IllegalArgumentException.class, () -> support.serialize(new FixedArray(new byte[]{1, 2, 3})));
+        assertThrows(IllegalArgumentException.class, () -> support.serialize(new FixedArray(new byte[]{1, 2, 3, 4, 5})));
+    }
+
+    @Test void supportsMixedFixedAndVariableArrays() {
+        var support = TypeSupport.forCdrRecord(MixedArrays.class);
+        byte[] prefix = new byte[]{(byte) 0xAA, (byte) 0xBB};
+        byte[] data = new byte[]{1, 2, 3};
+        byte[] suffix = new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
+        var value = new MixedArrays(prefix, data, suffix);
+        // prefix (2 bytes fixed, 1-byte alignment), pad to 4, data length (4 bytes),
+        // data (3 bytes), suffix (4 bytes fixed, 1-byte alignment)
+        // Body = 2 + 2(pad) + 4 + 3 + 4 = 15 bytes, trailing padding = 1
+        byte[] expected = hex("00010001 AABB0000 03000000 01020304 DEADBEEF 00");
+        var serialized = support.serialize(value);
+        // Verify deserialize roundtrip works
+        var deserialized = support.deserialize(serialized);
+        assertArrayEquals(prefix, deserialized.prefix());
+        assertArrayEquals(data, deserialized.data());
+        assertArrayEquals(suffix, deserialized.suffix());
+    }
+
+    @Test void rejectsNullByteArray() {
+        var support = TypeSupport.forCdrRecord(ArrayValue.class);
+        assertThrows(NullPointerException.class, () -> support.serialize(new ArrayValue(null)));
+    }
+
+    @Test void rejectsInvalidFixedLengthAnnotation() {
+        record BadFixedLengthOnString(@CdrFixedLength(10) String text) {}
+        assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(BadFixedLengthOnString.class));
+        record ZeroFixedLength(@CdrFixedLength(0) byte[] data) {}
+        assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(ZeroFixedLength.class));
+        record NegativeFixedLength(@CdrFixedLength(-1) byte[] data) {}
+        assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(NegativeFixedLength.class));
     }
 }

@@ -30,21 +30,36 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
     private final Constructor<T> constructor;
     private final Class<?>[] types;
     private final Method[] accessors;
+    private final int[] fixedLengths; // -1 for variable length, >= 0 for fixed
 
     private CdrRecordTypeSupport(Class<T> type) {
         this.type = type;
         RecordComponent[] components = type.getRecordComponents();
         types = new Class<?>[components.length];
         accessors = new Method[components.length];
+        fixedLengths = new int[components.length];
         try {
             for (int i = 0; i < components.length; i++) {
                 types[i] = components[i].getType();
-                if (!types[i].isPrimitive() && types[i] != String.class) {
+                if (!types[i].isPrimitive() && types[i] != String.class && types[i] != byte[].class) {
                     throw new IllegalArgumentException("Unsupported CDR component: " + components[i]);
                 }
                 accessors[i] = components[i].getAccessor();
                 if (!accessors[i].trySetAccessible()) {
                     throw new IllegalArgumentException("Inaccessible record component: " + components[i]);
+                }
+                // Check for @CdrFixedLength annotation
+                CdrFixedLength fixedLen = components[i].getAnnotation(CdrFixedLength.class);
+                if (fixedLen != null) {
+                    if (types[i] != byte[].class) {
+                        throw new IllegalArgumentException("@CdrFixedLength only applies to byte[]: " + components[i]);
+                    }
+                    if (fixedLen.value() <= 0) {
+                        throw new IllegalArgumentException("@CdrFixedLength must be positive: " + components[i]);
+                    }
+                    fixedLengths[i] = fixedLen.value();
+                } else {
+                    fixedLengths[i] = -1;
                 }
             }
             constructor = type.getDeclaredConstructor(types);
@@ -66,7 +81,7 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
             for (int i = 0; i < types.length; i++) {
                 Class<?> t = types[i];
                 Object v = accessors[i].invoke(value);
-                int width = alignment(t);
+                int width = alignment(t, i);
                 while (out.size() % width != 0) out.write(0);
                 if (t == String.class) {
                     String text = (String) Objects.requireNonNull(v, "Null String component: " + accessors[i].getName());
@@ -76,6 +91,20 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
                     writeNumber(out, (long) encoded.remaining() + 1, 4);
                     while (encoded.hasRemaining()) out.write(encoded.get());
                     out.write(0);
+                } else if (t == byte[].class) {
+                    byte[] bytes = (byte[]) Objects.requireNonNull(v, "Null byte[] component: " + accessors[i].getName());
+                    int fixedLen = fixedLengths[i];
+                    if (fixedLen >= 0) {
+                        // Fixed length array - no length prefix
+                        if (bytes.length != fixedLen) {
+                            throw new IllegalArgumentException("Expected byte[" + fixedLen + "] but got byte[" + bytes.length + "]");
+                        }
+                        out.writeBytes(bytes);
+                    } else {
+                        // Variable length sequence - 4 byte length prefix
+                        writeNumber(out, bytes.length, 4);
+                        out.writeBytes(bytes);
+                    }
                 } else {
                     long bits;
                     if (t == boolean.class) bits = (boolean) v ? 1 : 0;
@@ -120,7 +149,7 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
             Object[] values = new Object[types.length];
             for (int i = 0; i < types.length; i++) {
                 Class<?> t = types[i];
-                int skip = (-in.position()) & (alignment(t) - 1);
+                int skip = (-in.position()) & (alignment(t, i) - 1);
                 if (skip > in.remaining()) throw new IllegalArgumentException("Truncated CDR alignment");
                 in.position(in.position() + skip);
                 if (t == boolean.class) {
@@ -134,7 +163,24 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
                 else if (t == long.class) values[i] = in.getLong();
                 else if (t == float.class) values[i] = in.getFloat();
                 else if (t == double.class) values[i] = in.getDouble();
-                else {
+                else if (t == byte[].class) {
+                    int fixedLen = fixedLengths[i];
+                    int length;
+                    if (fixedLen >= 0) {
+                        // Fixed length array - no length prefix
+                        length = fixedLen;
+                    } else {
+                        // Variable length sequence - 4 byte length prefix
+                        length = in.getInt();
+                        if (length < 0 || length > in.remaining()) {
+                            throw new IllegalArgumentException("Invalid CDR sequence length");
+                        }
+                    }
+                    byte[] bytes = new byte[length];
+                    in.get(bytes);
+                    values[i] = bytes;
+                } else {
+                    // String
                     int length = in.getInt();
                     if (length < 1 || length > in.remaining()) throw new IllegalArgumentException("Invalid CDR string length");
                     int end = in.position() + length - 1;
@@ -163,10 +209,14 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
         }
     }
 
-    private static int alignment(Class<?> type) {
+    private int alignment(Class<?> type, int componentIndex) {
         if (type == boolean.class || type == byte.class || type == char.class) return 1;
         if (type == short.class) return 2;
         if (type == long.class || type == double.class) return 8;
+        if (type == byte[].class) {
+            // Fixed length has no prefix (1-byte alignment), variable has 4-byte length prefix
+            return fixedLengths[componentIndex] >= 0 ? 1 : 4;
+        }
         return 4;
     }
 
