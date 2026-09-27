@@ -94,6 +94,14 @@ public final class DomainParticipant implements Entity<DomainParticipantListener
     // ========== Topic Operations ==========
 
     /**
+     * Creates a topic using automatically derived, unkeyed record type support.
+     * See {@link TypeSupport#forRecord(Class)} for supported types and wire format.
+     */
+    public <T extends Record> Topic<T> createTopic(String topicName, Class<T> type) {
+        return createTopic(topicName, type, TypeSupport.forRecord(type));
+    }
+
+    /**
      * Creates a Topic with default QoS.
      *
      * @param topicName the topic name

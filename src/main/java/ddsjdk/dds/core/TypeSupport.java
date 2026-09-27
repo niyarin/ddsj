@@ -71,7 +71,15 @@ public interface TypeSupport<T> {
         return null;
     }
 
-    // registerType will be added when DomainParticipant is available
+    /**
+     * Creates cached, unkeyed support for a record with primitive or String components.
+     * Uses a DDSJDK-specific binary format, not CDR. The discovery type name is
+     * the record's binary class name. Null strings and unsupported components
+     * are rejected. Both endpoints must use the same record schema.
+     */
+    static <T extends Record> TypeSupport<T> forRecord(Class<T> type) {
+        return RecordTypeSupport.of(type);
+    }
 
     /**
      * Creates a TypeSupport from a PayloadSerializer.
