@@ -92,6 +92,31 @@ public final class RtpsParticipant implements Closeable {
 
     public GuidPrefix guidPrefix() { return prefix; }
 
+    /**
+     * Returns an unmodifiable snapshot of discovered remote writers, excluding local writers.
+     * Discovery is asynchronous and does not imply matching. Order is unspecified.
+     * @return the currently discovered remote writers
+     */
+    public List<RemotePublication> getDiscoveredPublications() {
+        ensureOpen();
+        return publications.snapshot().stream()
+                .filter(endpoint -> !endpoint.endpointGuid().prefix().equals(prefix))
+                .toList();
+    }
+
+    /**
+     * Returns an unmodifiable snapshot of discovered remote readers, excluding local readers.
+     * Discovery is asynchronous and does not imply matching. Order is unspecified.
+     * @return the currently discovered remote readers
+     */
+    public List<RemoteSubscription> getDiscoveredSubscriptions() {
+        ensureOpen();
+        return subscriptions.snapshot().stream()
+                .filter(endpoint -> !endpoint.endpointGuid().prefix().equals(prefix))
+                .toList();
+    }
+
+
     public synchronized <T> RtpsDataWriter<T> createWriter(LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
         ensureOpen();
         return new RtpsDataWriter<>(this, endpoint, serializer, false);

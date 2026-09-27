@@ -10,6 +10,8 @@ import ddsj.dds.qos.PublisherQos;
 import ddsj.dds.qos.SubscriberQos;
 import ddsj.dds.qos.TopicQos;
 import ddsj.dds.status.StatusMask;
+import ddsj.rtps.discovery.RemotePublication;
+import ddsj.rtps.discovery.RemoteSubscription;
 import ddsj.rtps.runtime.RtpsParticipant;
 import ddsj.rtps.transport.RtpsParticipantConfig;
 
@@ -89,6 +91,30 @@ public final class DomainParticipant implements Entity<DomainParticipantListener
      */
     RtpsParticipant rtpsParticipant() {
         return rtpsParticipant;
+    }
+
+    /**
+     * Returns an unmodifiable snapshot of discovered remote writers, in unspecified order.
+     * Discovery is asynchronous; the list may initially be empty. Entries are not
+     * restricted to endpoints matching a local reader. Local writers are excluded.
+     *
+     * @return discovered writers with their GUID, topic name, type name and QoS
+     */
+    public List<RemotePublication> getDiscoveredPublications() {
+        ensureOpen();
+        return rtpsParticipant.getDiscoveredPublications();
+    }
+
+    /**
+     * Returns an unmodifiable snapshot of discovered remote readers, in unspecified order.
+     * Discovery is asynchronous; the list may initially be empty. Entries are not
+     * restricted to endpoints matching a local writer. Local readers are excluded.
+     *
+     * @return discovered readers with their GUID, topic name, type name and QoS
+     */
+    public List<RemoteSubscription> getDiscoveredSubscriptions() {
+        ensureOpen();
+        return rtpsParticipant.getDiscoveredSubscriptions();
     }
 
     // ========== Topic Operations ==========

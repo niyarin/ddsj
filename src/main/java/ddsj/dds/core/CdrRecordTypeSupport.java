@@ -12,8 +12,8 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
-/** Plain XCDR1 record codec. Alignment is relative to the end of the encapsulation header. */
-final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
+/** Plain XCDR1/XCDR2 record codec. Alignment is relative to the end of the encapsulation header. */
+public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
     private static final ClassValue<CdrRecordTypeSupport<?>> CACHE = new ClassValue<>() {
         @Override protected CdrRecordTypeSupport<?> computeValue(Class<?> type) {
             if (!type.isRecord()) throw new IllegalArgumentException("Not a record: " + type.getName());
@@ -22,8 +22,8 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
     };
 
     @SuppressWarnings("unchecked")
-    static <T extends Record> TypeSupport<T> of(Class<T> type) {
-        return (TypeSupport<T>) CACHE.get(Objects.requireNonNull(type, "type"));
+    public static <T extends Record> CdrRecordTypeSupport<T> of(Class<T> type) {
+        return (CdrRecordTypeSupport<T>) CACHE.get(Objects.requireNonNull(type, "type"));
     }
 
     private final Class<T> type;
@@ -74,7 +74,17 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
     @Override public String getTypeName() { return type.getName(); }
     @Override public Class<T> getType() { return type; }
 
+    /** Serialize using CDR (XCDR1) little-endian encapsulation. */
     @Override public byte[] serialize(T value) {
+        return serializeWithEncapsulation(value, (byte) 0x01); // CDR_LE
+    }
+
+    /** Serialize using CDR2 (XCDR2) little-endian encapsulation. */
+    public byte[] serializeCdr2(T value) {
+        return serializeWithEncapsulation(value, (byte) 0x11); // CDR2_LE
+    }
+
+    private byte[] serializeWithEncapsulation(T value, byte encapsulationId) {
         Objects.requireNonNull(value, "value");
         try {
             var out = new ByteArrayOutputStream();
@@ -119,7 +129,7 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
             }
             int padding = (-out.size()) & 3;
             var payload = new ByteArrayOutputStream();
-            payload.writeBytes(new byte[]{0, 1, 0, (byte) padding}); // CDR_LE, trailing padding count
+            payload.writeBytes(new byte[]{0, encapsulationId, 0, (byte) padding});
             payload.writeBytes(out.toByteArray());
             for (int i = 0; i < padding; i++) payload.write(0);
             return payload.toByteArray();
@@ -128,12 +138,22 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
         }
     }
 
+    /** Deserialize from CDR (XCDR1) or CDR2 (XCDR2) encapsulation. */
     @Override public T deserialize(byte[] data) {
         Objects.requireNonNull(data, "data");
         try {
-            if (data.length < 4 || data[0] != 0 || (data[1] != 0 && data[1] != 1)) {
-                throw new IllegalArgumentException("Expected CDR_BE or CDR_LE encapsulation");
+            if (data.length < 4 || data[0] != 0) {
+                throw new IllegalArgumentException("Invalid CDR encapsulation header");
             }
+            int encapId = Byte.toUnsignedInt(data[1]);
+            boolean littleEndian = switch (encapId) {
+                case 0x00 -> false; // CDR_BE (XCDR1)
+                case 0x01 -> true;  // CDR_LE (XCDR1)
+                case 0x10 -> false; // CDR2_BE (XCDR2)
+                case 0x11 -> true;  // CDR2_LE (XCDR2)
+                default -> throw new IllegalArgumentException(
+                        "Unsupported CDR encapsulation: 0x" + Integer.toHexString(encapId));
+            };
             if (data[2] != 0 || (data[3] & 0xfc) != 0) {
                 throw new IllegalArgumentException("Unsupported CDR encapsulation options");
             }
@@ -145,7 +165,7 @@ final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
                 if (data[i] != 0) throw new IllegalArgumentException("Invalid CDR padding");
             }
             var in = ByteBuffer.wrap(data, 4, data.length - 4 - padding).slice()
-                    .order(data[1] == 1 ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+                    .order(littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
             Object[] values = new Object[types.length];
             for (int i = 0; i < types.length; i++) {
                 Class<?> t = types[i];
