@@ -81,7 +81,7 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
 
     /** Serialize using CDR2 (XCDR2) little-endian encapsulation. */
     public byte[] serializeCdr2(T value) {
-        return serializeWithEncapsulation(value, (byte) 0x11); // CDR2_LE
+        return serializeWithEncapsulation(value, (byte) 0x07); // CDR2_LE
     }
 
     private byte[] serializeWithEncapsulation(T value, byte encapsulationId) {
@@ -149,8 +149,8 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
             boolean littleEndian = switch (encapId) {
                 case 0x00 -> false; // CDR_BE (XCDR1)
                 case 0x01 -> true;  // CDR_LE (XCDR1)
-                case 0x10 -> false; // CDR2_BE (XCDR2)
-                case 0x11 -> true;  // CDR2_LE (XCDR2)
+                case 0x06 -> false; // CDR2_BE (XCDR2)
+                case 0x07 -> true;  // CDR2_LE (XCDR2)
                 default -> throw new IllegalArgumentException(
                         "Unsupported CDR encapsulation: 0x" + Integer.toHexString(encapId));
             };
