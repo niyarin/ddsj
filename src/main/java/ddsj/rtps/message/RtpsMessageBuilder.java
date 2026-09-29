@@ -51,6 +51,51 @@ public final class RtpsMessageBuilder {
         submessage(RtpsSubmessageKind.DATA, 0x05, body.toByteArray());
     }
 
+    /**
+     * Sends DATA with related_sample_identity in Inline QoS.
+     * Used for DDS-RPC service responses to correlate with requests.
+     *
+     * @param readerId target reader entity ID
+     * @param writerId source writer entity ID
+     * @param sequenceNumber this message's sequence number
+     * @param relatedGuid GUID from the related request (client's response reader GUID)
+     * @param relatedSequenceNumber sequence number of the related request
+     * @param serializedPayload the CDR-serialized response data
+     */
+    public void dataWithRelatedSampleIdentity(EntityId readerId, EntityId writerId, long sequenceNumber,
+                                               Guid relatedGuid, long relatedSequenceNumber, byte[] serializedPayload) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(RtpsIo.shortLe(0)); // extraFlags
+        body.writeBytes(RtpsIo.shortLe(16)); // octetsToInlineQos
+        body.writeBytes(readerId.bytes());
+        body.writeBytes(writerId.bytes());
+        body.writeBytes(RtpsIo.intLe((int) (sequenceNumber >>> 32)));
+        body.writeBytes(RtpsIo.intLe((int) sequenceNumber));
+
+        // Inline QoS: PID_RELATED_SAMPLE_IDENTITY (0x0083) - 24 bytes
+        body.writeBytes(RtpsIo.shortLe(ParameterId.RELATED_SAMPLE_IDENTITY));
+        body.writeBytes(RtpsIo.shortLe(24)); // length
+        body.writeBytes(relatedGuid.bytes()); // 16 bytes GUID
+        body.writeBytes(RtpsIo.intLe((int) (relatedSequenceNumber >>> 32))); // sequence.high
+        body.writeBytes(RtpsIo.intLe((int) relatedSequenceNumber)); // sequence.low
+
+        // Inline QoS: PID_CUSTOM_RELATED_SAMPLE_IDENTITY (0x800f) - backward compat
+        body.writeBytes(RtpsIo.shortLe(ParameterId.CUSTOM_RELATED_SAMPLE_IDENTITY));
+        body.writeBytes(RtpsIo.shortLe(24)); // length
+        body.writeBytes(relatedGuid.bytes()); // 16 bytes GUID
+        body.writeBytes(RtpsIo.intLe((int) (relatedSequenceNumber >>> 32))); // sequence.high
+        body.writeBytes(RtpsIo.intLe((int) relatedSequenceNumber)); // sequence.low
+
+        // PID_SENTINEL
+        body.writeBytes(RtpsIo.shortLe(ParameterId.SENTINEL));
+        body.writeBytes(RtpsIo.shortLe(0));
+
+        body.writeBytes(serializedPayload);
+
+        // flags: 0x07 = little-endian (0x01) + Inline QoS present (0x02) + Data present (0x04)
+        submessage(RtpsSubmessageKind.DATA, 0x07, body.toByteArray());
+    }
+
     public void dataFrag(EntityId readerId, EntityId writerId, long sequenceNumber,
                          int fragmentStartingNum, int fragmentsInSubmessage,
                          int fragmentSize, int sampleSize, byte[] fragmentData) {

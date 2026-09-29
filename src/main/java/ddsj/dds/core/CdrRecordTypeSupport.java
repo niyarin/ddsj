@@ -84,6 +84,57 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
         return serializeWithEncapsulation(value, (byte) 0x07); // CDR2_LE
     }
 
+    /** Serialize using D_CDR2 (Delimited CDR2) for ROS2 services. */
+    public byte[] serializeDCdr2(T value) {
+        // D_CDR2 format: [0x83][0x00][options 2 bytes][serialized data]
+        Objects.requireNonNull(value, "value");
+        try {
+            var out = new ByteArrayOutputStream();
+            for (int i = 0; i < types.length; i++) {
+                Class<?> t = types[i];
+                Object v = accessors[i].invoke(value);
+                int width = alignment(t, i);
+                while (out.size() % width != 0) out.write(0);
+                if (t == String.class) {
+                    String text = (String) Objects.requireNonNull(v, "Null String component");
+                    ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
+                            .onMalformedInput(CodingErrorAction.REPORT).encode(CharBuffer.wrap(text));
+                    writeNumber(out, (long) encoded.remaining() + 1, 4);
+                    while (encoded.hasRemaining()) out.write(encoded.get());
+                    out.write(0);
+                } else if (t == byte[].class) {
+                    byte[] bytes = (byte[]) Objects.requireNonNull(v, "Null byte[]");
+                    int fixedLen = fixedLengths[i];
+                    if (fixedLen >= 0) {
+                        out.writeBytes(bytes);
+                    } else {
+                        writeNumber(out, bytes.length, 4);
+                        out.writeBytes(bytes);
+                    }
+                } else {
+                    long bits;
+                    if (t == boolean.class) bits = (boolean) v ? 1 : 0;
+                    else if (t == char.class) bits = (char) v;
+                    else if (t == float.class) bits = Float.floatToRawIntBits((float) v);
+                    else if (t == double.class) bits = Double.doubleToRawLongBits((double) v);
+                    else bits = ((Number) v).longValue();
+                    writeNumber(out, bits, width);
+                }
+            }
+            byte[] serialized = out.toByteArray();
+            var payload = new ByteArrayOutputStream();
+            // D_CDR2 header: 0x83, 0x00, size as options (little-endian)
+            payload.write(0x83);
+            payload.write(0x00);
+            payload.write(serialized.length & 0xFF);
+            payload.write((serialized.length >> 8) & 0xFF);
+            payload.writeBytes(serialized);
+            return payload.toByteArray();
+        } catch (ReflectiveOperationException | CharacterCodingException e) {
+            throw new IllegalArgumentException("Cannot serialize " + type.getName(), e);
+        }
+    }
+
     private byte[] serializeWithEncapsulation(T value, byte encapsulationId) {
         Objects.requireNonNull(value, "value");
         try {
@@ -142,29 +193,35 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
     @Override public T deserialize(byte[] data) {
         Objects.requireNonNull(data, "data");
         try {
+            int dataStart = 4; // Standard CDR header is 4 bytes
+            boolean littleEndian;
+            int padding = 0;
+
             if (data.length < 4 || data[0] != 0) {
                 throw new IllegalArgumentException("Invalid CDR encapsulation header");
+            } else {
+                // Standard CDR format: [0x00][encapId][options (2 bytes)]
+                int encapId = Byte.toUnsignedInt(data[1]);
+                littleEndian = switch (encapId) {
+                    case 0x00 -> false; // CDR_BE (XCDR1)
+                    case 0x01 -> true;  // CDR_LE (XCDR1)
+                    case 0x06 -> false; // CDR2_BE (XCDR2)
+                    case 0x07 -> true;  // CDR2_LE (XCDR2)
+                    default -> throw new IllegalArgumentException(
+                            "Unsupported CDR encapsulation: 0x" + Integer.toHexString(encapId));
+                };
+                if (data[2] != 0 || (data[3] & 0xfc) != 0) {
+                    throw new IllegalArgumentException("Unsupported CDR encapsulation options");
+                }
+                padding = data[3] & 3;
             }
-            int encapId = Byte.toUnsignedInt(data[1]);
-            boolean littleEndian = switch (encapId) {
-                case 0x00 -> false; // CDR_BE (XCDR1)
-                case 0x01 -> true;  // CDR_LE (XCDR1)
-                case 0x06 -> false; // CDR2_BE (XCDR2)
-                case 0x07 -> true;  // CDR2_LE (XCDR2)
-                default -> throw new IllegalArgumentException(
-                        "Unsupported CDR encapsulation: 0x" + Integer.toHexString(encapId));
-            };
-            if (data[2] != 0 || (data[3] & 0xfc) != 0) {
-                throw new IllegalArgumentException("Unsupported CDR encapsulation options");
-            }
-            int padding = data[3] & 3;
-            if (padding > data.length - 4 || (padding != 0 && data.length % 4 != 0)) {
+            if (padding > data.length - dataStart || (padding != 0 && data.length % 4 != 0)) {
                 throw new IllegalArgumentException("Invalid CDR padding");
             }
             for (int i = data.length - padding; i < data.length; i++) {
                 if (data[i] != 0) throw new IllegalArgumentException("Invalid CDR padding");
             }
-            var in = ByteBuffer.wrap(data, 4, data.length - 4 - padding).slice()
+            var in = ByteBuffer.wrap(data, dataStart, data.length - dataStart - padding).slice()
                     .order(littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
             Object[] values = new Object[types.length];
             for (int i = 0; i < types.length; i++) {

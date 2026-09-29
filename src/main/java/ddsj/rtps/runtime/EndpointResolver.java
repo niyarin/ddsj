@@ -31,7 +31,8 @@ final class EndpointResolver {
     }
 
     boolean acceptsPublication(Guid writerGuid, boolean allowUndiscovered) {
-        return publications.get(writerGuid)
+        var pub = publications.get(writerGuid);
+        return pub
                 .map(remote -> matches(remote, remote.qos(), local.qos()))
                 .orElse(allowUndiscovered);
     }
@@ -56,8 +57,9 @@ final class EndpointResolver {
     }
 
     private boolean matches(RemoteEndpoint remote, EndpointQos offered, EndpointQos requested) {
-        return remote.topicName().equals(local.topicName())
-                && remote.typeName().equals(local.typeName())
-                && offered.isCompatibleWithRequested(requested);
+        boolean topicMatch = remote.topicName().equals(local.topicName());
+        boolean typeMatch = remote.typeName().equals(local.typeName());
+        boolean qosMatch = offered.isCompatibleWithRequested(requested);
+        return topicMatch && typeMatch && qosMatch;
     }
 }

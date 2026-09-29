@@ -180,8 +180,9 @@ public final class RtpsDiscoveryReader {
         if (topicName.isEmpty() || typeName.isEmpty()) {
             return Optional.empty();
         }
+        var guid = guidFromBytes(endpointGuid.get());
         return Optional.of(new RemoteEndpointPayload(
-                guidFromBytes(endpointGuid.get()),
+                guid,
                 topicName.get(),
                 typeName.get(),
                 RtpsQosParameters.read(params, littleEndian)));

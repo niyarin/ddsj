@@ -138,7 +138,7 @@ class CdrRecordTypeSupportTest {
         }
         for (String invalid : new String[]{
                 "00030000 01000000 03000000 48690000", // parameter-list encoding
-                "00070000 01000000 03000000 48690000", // XCDR2
+                // XCDR2 (0x06, 0x07) is now supported
                 "01010000 01000000 03000000 48690000", // invalid identifier
                 "00010100 01000000 03000000 48690000", // unsupported options
                 "00010004 01000000 03000000 48690000",

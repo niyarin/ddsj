@@ -1,8 +1,10 @@
 package ddsj.dds.sample;
 
 import ddsj.dds.instance.SampleInfo;
+import ddsj.rtps.message.SampleIdentity;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * A data sample with associated metadata.
@@ -14,8 +16,10 @@ import java.util.Objects;
  * @param <T> the data type
  * @param data the data value, may be null for invalid samples
  * @param info the sample metadata
+ * @param relatedSampleIdentity for DDS-RPC, the identity to correlate request/response
+ * @param writerSequenceNumber the DATA writerSN (for DDS-RPC response correlation)
  */
-public record Sample<T>(T data, SampleInfo info) {
+public record Sample<T>(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity, long writerSequenceNumber) {
     /**
      * Creates a sample with validated parameters.
      *
@@ -23,6 +27,21 @@ public record Sample<T>(T data, SampleInfo info) {
      */
     public Sample {
         Objects.requireNonNull(info, "info");
+        Objects.requireNonNull(relatedSampleIdentity, "relatedSampleIdentity");
+    }
+
+    /**
+     * Creates a sample without relatedSampleIdentity (for normal pub/sub).
+     */
+    public Sample(T data, SampleInfo info) {
+        this(data, info, Optional.empty(), 0);
+    }
+
+    /**
+     * Creates a sample with relatedSampleIdentity but no writerSequenceNumber.
+     */
+    public Sample(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity) {
+        this(data, info, relatedSampleIdentity, 0);
     }
 
     /**

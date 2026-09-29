@@ -12,6 +12,7 @@ import ddsj.rtps.message.FragmentSender;
 import ddsj.rtps.message.NackFrag;
 import ddsj.rtps.message.NackFragListener;
 import ddsj.rtps.message.RtpsMessageBuilder;
+import ddsj.rtps.message.SampleIdentity;
 import ddsj.rtps.protocol.RtpsEntity;
 import ddsj.rtps.transport.RtpsParticipantConfig;
 import ddsj.rtps.transport.RtpsTransport;
@@ -102,6 +103,17 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     public synchronized void write(T value) throws IOException {
+        write(value, null);
+    }
+
+    /**
+     * Writes a value with an optional related sample identity.
+     * Used for DDS-RPC service responses to correlate with requests.
+     *
+     * @param value the value to write
+     * @param relatedSampleIdentity for service responses, identifies the related request
+     */
+    public synchronized void write(T value, SampleIdentity relatedSampleIdentity) throws IOException {
         if (!running.get()) {
             throw new IOException("writer is closed");
         }
@@ -111,7 +123,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             throw new IOException("writer history resource limit reached");
         }
         userSequence.incrementAndGet();
-        sendUserData(sequenceNumber, payload);
+        sendUserData(sequenceNumber, payload, relatedSampleIdentity);
         livelinessAsserter.onDataWritten();
     }
 
@@ -173,26 +185,38 @@ public final class RtpsDataWriter<T> implements Closeable {
         for (long sequenceNumber : ackNack.requestedSequenceNumbers()) {
             var payload = history.get(sequenceNumber);
             if (payload.isPresent()) {
-                sendUserData(sequenceNumber, payload.get());
+                sendUserData(sequenceNumber, payload.get(), null);
             } else {
                 sendGap(ackNack.readerId(), sequenceNumber);
             }
         }
     }
 
-    private void sendUserData(long sequenceNumber, byte[] payload) throws IOException {
+    private void sendUserData(long sequenceNumber, byte[] payload, SampleIdentity relatedSampleIdentity) throws IOException {
         if (fragmentSender.requiresFragmentation(payload)) {
             sendUserDataFragmented(sequenceNumber, payload);
         } else {
-            sendUserDataComplete(sequenceNumber, payload);
+            sendUserDataComplete(sequenceNumber, payload, relatedSampleIdentity);
         }
     }
 
-    private void sendUserDataComplete(long sequenceNumber, byte[] payload) throws IOException {
+    private void sendUserDataComplete(long sequenceNumber, byte[] payload, SampleIdentity relatedSampleIdentity) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.infoTs(RtpsTimestamp.now());
-        message.data(RtpsEntity.UNKNOWN, entityId, sequenceNumber, payload);
-        sendToUserLocators(message.bytes());
+        if (relatedSampleIdentity != null) {
+            message.dataWithRelatedSampleIdentity(
+                    RtpsEntity.UNKNOWN, entityId, sequenceNumber,
+                    relatedSampleIdentity.writerGuid(), relatedSampleIdentity.sequenceNumber(),
+                    payload);
+            // For DDS-RPC responses: send directly to the client's participant using the
+            // GUID from related_sample_identity, even if SEDP discovery hasn't completed yet.
+            // This avoids a race condition where the response is sent before SEDP discovers
+            // the client's reply subscription.
+            sendToUserLocators(message.bytes(), relatedSampleIdentity.writerGuid().prefix());
+        } else {
+            message.data(RtpsEntity.UNKNOWN, entityId, sequenceNumber, payload);
+            sendToUserLocators(message.bytes(), null);
+        }
     }
 
     private void sendUserDataFragmented(long sequenceNumber, byte[] payload) throws IOException {
@@ -237,9 +261,28 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     private void sendToUserLocators(byte[] message) throws IOException {
+        sendToUserLocators(message, null);
+    }
+
+    private void sendToUserLocators(byte[] message, GuidPrefix targetParticipant) throws IOException {
         transport.sendUserData(message);
-        for (RemoteParticipant participant : endpointResolver.participantsForSubscriptions()) {
-            for (var locator : participant.userUnicast()) {
+
+        // If we have a specific target participant (e.g., for DDS-RPC responses),
+        // send to it directly even if SEDP hasn't discovered it yet
+        if (targetParticipant != null) {
+            var targetOpt = participant.remoteParticipants().get(targetParticipant);
+            if (targetOpt.isPresent()) {
+                var target = targetOpt.get();
+                for (var locator : target.userUnicast()) {
+                    transport.send(message, locator);
+                }
+                return;
+            }
+        }
+
+        var subs = endpointResolver.participantsForSubscriptions();
+        for (RemoteParticipant remoteParticipant : subs) {
+            for (var locator : remoteParticipant.userUnicast()) {
                 transport.send(message, locator);
             }
         }

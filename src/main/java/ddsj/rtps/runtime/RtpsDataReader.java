@@ -9,6 +9,7 @@ import ddsj.rtps.history.ReaderSampleQueue;
 import ddsj.rtps.message.Heartbeat;
 import ddsj.rtps.message.RtpsMessageBuilder;
 import ddsj.rtps.message.RtpsUserDataReader;
+import ddsj.rtps.message.SampleIdentity;
 import ddsj.rtps.message.UserDataSample;
 import ddsj.rtps.transport.RtpsParticipantConfig;
 import ddsj.rtps.transport.RtpsTransport;
@@ -39,7 +40,7 @@ public final class RtpsDataReader<T> implements Closeable {
     private final EntityId entityId;
     private final GuidPrefix guidPrefix;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final ReaderSampleQueue<T> messages;
+    private final ReaderSampleQueue<ReceivedSample<T>> messages;
     private final AtomicLong sampleRejectedCount = new AtomicLong();
     private final AtomicLong deserializationErrorCount = new AtomicLong();
     private volatile DeserializationError lastDeserializationError;
@@ -172,9 +173,9 @@ public final class RtpsDataReader<T> implements Closeable {
         }
         ensureOpen();
         List<T> result = new ArrayList<>();
-        T message;
-        while (result.size() < maxSamples && (message = messages.poll()) != null) {
-            result.add(message);
+        ReceivedSample<T> sample;
+        while (result.size() < maxSamples && (sample = messages.poll()) != null) {
+            result.add(sample.data());
         }
         return result;
     }
@@ -186,10 +187,43 @@ public final class RtpsDataReader<T> implements Closeable {
         return drain(Integer.MAX_VALUE);
     }
 
+    /** Removes up to maxSamples queued samples with metadata in arrival order without waiting.
+     * @throws IllegalArgumentException if maxSamples is negative
+     * @throws IllegalStateException if this reader is closed
+     */
+    public synchronized List<ReceivedSample<T>> drainWithMetadata(int maxSamples) {
+        if (maxSamples < 0) {
+            throw new IllegalArgumentException("maxSamples must not be negative");
+        }
+        ensureOpen();
+        List<ReceivedSample<T>> result = new ArrayList<>();
+        ReceivedSample<T> sample;
+        while (result.size() < maxSamples && (sample = messages.poll()) != null) {
+            result.add(sample);
+        }
+        return result;
+    }
+
+    /** Removes all currently queued samples with metadata without waiting.
+     * @throws IllegalStateException if this reader is closed
+     */
+    public List<ReceivedSample<T>> drainWithMetadata() {
+        return drainWithMetadata(Integer.MAX_VALUE);
+    }
+
     /** Removes one queued value without waiting; empty means no value is available.
      * @throws IllegalStateException if this reader is closed
      */
     public synchronized Optional<T> poll() {
+        ensureOpen();
+        ReceivedSample<T> sample = messages.poll();
+        return sample != null ? Optional.of(sample.data()) : Optional.empty();
+    }
+
+    /** Removes one queued sample with metadata without waiting; empty means no value is available.
+     * @throws IllegalStateException if this reader is closed
+     */
+    public synchronized Optional<ReceivedSample<T>> pollWithMetadata() {
         ensureOpen();
         return Optional.ofNullable(messages.poll());
     }
@@ -218,9 +252,9 @@ public final class RtpsDataReader<T> implements Closeable {
                 throw new InterruptedException();
             }
             ensureOpen();
-            T message = messages.poll();
-            if (message != null) {
-                return Optional.of(message);
+            ReceivedSample<T> sample = messages.poll();
+            if (sample != null) {
+                return Optional.of(sample.data());
             }
             if (remaining <= 0) {
                 return Optional.empty();
@@ -306,7 +340,7 @@ public final class RtpsDataReader<T> implements Closeable {
         if (!running.get()) {
             return;
         }
-        if (!endpointResolver.acceptsPublication(sample.writerGuid(), ownsParticipant)) {
+        if (!endpointResolver.acceptsPublication(sample.writerGuid(), true)) {
             return;
         }
         if (history.contains(sample)) {
@@ -327,7 +361,12 @@ public final class RtpsDataReader<T> implements Closeable {
             }
             return;
         }
-        if (!messages.offer(value)) {
+        ReceivedSample<T> receivedSample = new ReceivedSample<>(
+                value,
+                sample.writerGuid(),
+                sample.sequenceNumber(),
+                sample.relatedSampleIdentity());
+        if (!messages.offer(receivedSample)) {
             sampleRejectedCount.incrementAndGet();
             return;
         }

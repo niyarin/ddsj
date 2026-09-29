@@ -11,7 +11,9 @@ import ddsj.dds.qos.QosConverter;
 import ddsj.dds.sample.Sample;
 import ddsj.dds.status.*;
 import ddsj.rtps.discovery.LocalEndpoint;
+import ddsj.rtps.message.SampleIdentity;
 import ddsj.rtps.runtime.PayloadSerializer;
+import ddsj.rtps.runtime.ReceivedSample;
 import ddsj.rtps.runtime.RtpsDataReader;
 
 import java.io.IOException;
@@ -404,8 +406,9 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
     // ========== Internal ==========
 
     private void fetchFromRtps() {
-        List<T> newData = rtpsReader.drain();
-        for (T data : newData) {
+        List<ReceivedSample<T>> newSamples = rtpsReader.drainWithMetadata();
+        for (ReceivedSample<T> received : newSamples) {
+            T data = received.data();
             InstanceHandle handle = getOrCreateInstanceHandle(data);
             InstanceInfo info = getOrCreateInstanceInfo(data);
 
@@ -419,7 +422,7 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
                     0, 0, 0, 0, 0,
                     true
             );
-            sampleCache.add(new CachedSample<>(data, sampleInfo));
+            sampleCache.add(new CachedSample<>(data, sampleInfo, received.relatedSampleIdentity(), received.sequenceNumber()));
             info.isNew = false;
         }
     }
@@ -454,13 +457,17 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
     private static class CachedSample<T> {
         final T data;
         final SampleInfo originalInfo;
+        final Optional<SampleIdentity> relatedSampleIdentity;
+        final long writerSequenceNumber;
         SampleState sampleState;
         ViewState viewState;
         InstanceState instanceState;
 
-        CachedSample(T data, SampleInfo info) {
+        CachedSample(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity, long writerSequenceNumber) {
             this.data = data;
             this.originalInfo = info;
+            this.relatedSampleIdentity = relatedSampleIdentity;
+            this.writerSequenceNumber = writerSequenceNumber;
             this.sampleState = info.sampleState();
             this.viewState = info.viewState();
             this.instanceState = info.instanceState();
@@ -484,7 +491,7 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
                     originalInfo.absoluteGenerationRank(),
                     originalInfo.validData()
             );
-            return new Sample<>(data, currentInfo);
+            return new Sample<>(data, currentInfo, relatedSampleIdentity, writerSequenceNumber);
         }
     }
 

@@ -25,6 +25,11 @@ public final class ParameterId {
     public static final int OWNERSHIP = 0x001f;
     public static final int OWNERSHIP_STRENGTH = 0x0006;
 
+    // DDS-RPC related sample identity (for service request/response correlation)
+    public static final int RELATED_SAMPLE_IDENTITY = 0x0083;
+    // FastDDS backward compatibility PID for same purpose
+    public static final int CUSTOM_RELATED_SAMPLE_IDENTITY = 0x800f;
+
     private ParameterId() {
     }
 }

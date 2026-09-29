@@ -27,4 +27,10 @@ public final class EntityId {
     public int hashCode() {
         return Arrays.hashCode(bytes);
     }
+
+    @Override
+    public String toString() {
+        return String.format("EntityId[%02x%02x%02x%02x]",
+                bytes[0] & 0xFF, bytes[1] & 0xFF, bytes[2] & 0xFF, bytes[3] & 0xFF);
+    }
 }

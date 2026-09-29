@@ -9,6 +9,7 @@ import ddsj.dds.qos.DataWriterQos;
 import ddsj.dds.qos.QosConverter;
 import ddsj.dds.status.*;
 import ddsj.rtps.discovery.LocalEndpoint;
+import ddsj.rtps.message.SampleIdentity;
 import ddsj.rtps.runtime.PayloadSerializer;
 import ddsj.rtps.runtime.RtpsDataWriter;
 
@@ -128,6 +129,23 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
     public ReturnCode writeWithTimestamp(T data, InstanceHandle handle, Instant timestamp) {
         // Current RTPS layer doesn't support explicit timestamps, so just write
         return write(data, handle);
+    }
+
+    /**
+     * Writes a data value with related sample identity (for DDS-RPC service responses).
+     *
+     * @param data the data to write
+     * @param relatedSampleIdentity identifies the related request (from request's Inline QoS)
+     * @return OK if successful
+     */
+    public ReturnCode writeWithRelatedSampleIdentity(T data, SampleIdentity relatedSampleIdentity) {
+        ensureOpen();
+        try {
+            rtpsWriter.write(data, relatedSampleIdentity);
+            return ReturnCode.OK;
+        } catch (IOException e) {
+            return ReturnCode.ERROR;
+        }
     }
 
     // ========== Instance Management ==========

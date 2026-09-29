@@ -36,6 +36,7 @@ public final class RtpsUserDataParser {
                         submessage.body(),
                         expectedReaderId,
                         submessage.littleEndian(),
+                        submessage.flags(),
                         submessage.timestamp()).ifPresent(result::add);
             }
         }
@@ -110,16 +111,18 @@ public final class RtpsUserDataParser {
         return result;
     }
 
+    private static final int DATA_FLAG_INLINE_QOS = 0x02;
+
     private static Optional<UserDataSample> parseUserDataSubmessage(
             GuidPrefix sourceGuidPrefix,
             byte[] body,
             EntityId expectedReaderId,
             boolean littleEndian,
+            int submessageFlags,
             Optional<RtpsTimestamp> timestamp) {
         if (body.length < 20) {
             return Optional.empty();
         }
-        int extraFlags = RtpsIo.readUShort(body, 0, littleEndian);
         int octetsToInlineQos = RtpsIo.readUShort(body, 2, littleEndian);
         EntityId readerId = new EntityId(Arrays.copyOfRange(body, 4, 8));
         if (!readerId.equals(expectedReaderId) && !isUnknownEntity(readerId)) {
@@ -132,12 +135,16 @@ public final class RtpsUserDataParser {
         if (payloadOffset > body.length) {
             return Optional.empty();
         }
-        if ((extraFlags & 0x0002) != 0) {
-            Optional<Integer> inlineEnd = skipInlineQos(body, payloadOffset, body.length, littleEndian);
-            if (inlineEnd.isEmpty()) {
+
+        // Parse Inline QoS if present (Q flag in submessage header)
+        Optional<SampleIdentity> relatedSampleIdentity = Optional.empty();
+        if ((submessageFlags & DATA_FLAG_INLINE_QOS) != 0) {
+            var inlineResult = parseInlineQos(body, payloadOffset, body.length, littleEndian);
+            if (inlineResult.isEmpty()) {
                 return Optional.empty();
             }
-            payloadOffset = inlineEnd.get();
+            payloadOffset = inlineResult.get().payloadOffset();
+            relatedSampleIdentity = inlineResult.get().relatedSampleIdentity();
         }
         if (payloadOffset >= body.length) {
             return Optional.empty();
@@ -146,7 +153,8 @@ public final class RtpsUserDataParser {
                 new Guid(sourceGuidPrefix, writerId),
                 sequenceNumber,
                 Arrays.copyOfRange(body, payloadOffset, body.length),
-                timestamp));
+                timestamp,
+                relatedSampleIdentity));
     }
 
     private static Optional<DataFragment> parseDataFragmentSubmessage(
@@ -274,14 +282,30 @@ public final class RtpsUserDataParser {
                 count));
     }
 
-    private static Optional<Integer> skipInlineQos(byte[] packet, int offset, int end, boolean littleEndian) {
+    private record InlineQosResult(int payloadOffset, Optional<SampleIdentity> relatedSampleIdentity) {}
+
+    private static Optional<InlineQosResult> parseInlineQos(byte[] packet, int offset, int end, boolean littleEndian) {
         int position = offset;
+        Optional<SampleIdentity> relatedSampleIdentity = Optional.empty();
+
         while (position + 4 <= end) {
             int id = RtpsIo.readUShort(packet, position, littleEndian);
             int size = RtpsIo.readUShort(packet, position + 2, littleEndian);
             position += 4;
             if (id == ParameterId.SENTINEL) {
-                return Optional.of(position);
+                return Optional.of(new InlineQosResult(position, relatedSampleIdentity));
+            }
+            // Parse PID_RELATED_SAMPLE_IDENTITY (0x0083) or PID_CUSTOM_RELATED_SAMPLE_IDENTITY (0x800f)
+            if ((id == ParameterId.RELATED_SAMPLE_IDENTITY || id == ParameterId.CUSTOM_RELATED_SAMPLE_IDENTITY)
+                    && size == 24 && position + 24 <= end && relatedSampleIdentity.isEmpty()) {
+                // Structure: GUID (16 bytes) + sequence number (8 bytes: high 4 + low 4)
+                GuidPrefix guidPrefix = new GuidPrefix(Arrays.copyOfRange(packet, position, position + 12));
+                EntityId entityId = new EntityId(Arrays.copyOfRange(packet, position + 12, position + 16));
+                Guid guid = new Guid(guidPrefix, entityId);
+                long seqHigh = Integer.toUnsignedLong(RtpsIo.readInt(packet, position + 16, littleEndian));
+                long seqLow = Integer.toUnsignedLong(RtpsIo.readInt(packet, position + 20, littleEndian));
+                long seqNum = (seqHigh << 32) | seqLow;
+                relatedSampleIdentity = Optional.of(new SampleIdentity(guid, seqNum));
             }
             position += size;
             while (position % 4 != 0) {
