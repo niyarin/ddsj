@@ -2,6 +2,8 @@
 
 A DDS-RTPS implementation written in pure Java.
 
+This library supports Java 17+ and Android API level 34+
+
 ## Usage
 
 ### Publisher
