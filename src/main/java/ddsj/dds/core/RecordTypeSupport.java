@@ -43,13 +43,17 @@ final class RecordTypeSupport<T extends Record> implements TypeSupport<T> {
                             + type.getName() + "." + components[i].getName());
                 }
                 accessors[i] = components[i].getAccessor();
-                if (!accessors[i].trySetAccessible()) {
-                    throw new IllegalArgumentException("Inaccessible record component: " + components[i]);
+                try {
+                    accessors[i].setAccessible(true);
+                } catch (RuntimeException e) {
+                    throw new IllegalArgumentException("Inaccessible record component: " + components[i], e);
                 }
             }
             constructor = type.getDeclaredConstructor(types);
-            if (!constructor.trySetAccessible()) {
-                throw new IllegalArgumentException("Inaccessible record constructor: " + type.getName());
+            try {
+                constructor.setAccessible(true);
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("Inaccessible record constructor: " + type.getName(), e);
             }
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException("Cannot inspect record: " + type.getName(), e);

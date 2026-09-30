@@ -13,9 +13,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /** One physical subscription per traffic channel, shared by all participant endpoints. */
 final class ParticipantTransport implements RtpsTransport {
+    private static final Logger LOGGER = Logger.getLogger(ParticipantTransport.class.getName());
+
     private final RtpsTransport delegate;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final List<PacketHandler> metaHandlers = new CopyOnWriteArrayList<>();
@@ -42,8 +46,8 @@ final class ParticipantTransport implements RtpsTransport {
             try {
                 handler.handle(packet);
             } catch (RuntimeException e) {
-                System.getLogger(ParticipantTransport.class.getName()).log(
-                        System.Logger.Level.WARNING, "RTPS packet handler failed", e);
+                LOGGER.log(
+                        Level.WARNING, "RTPS packet handler failed", e);
             }
         }
     }

@@ -32,9 +32,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /** Owns transport, discovery and endpoint identities. Closing it closes all its endpoints. */
 public final class RtpsParticipant implements Closeable {
+    private static final Logger LOGGER = Logger.getLogger(RtpsParticipant.class.getName());
+
     private final GuidPrefix prefix = RtpsGuid.newGuidPrefix();
     private final ParticipantTransport transport;
     private final RemoteParticipantStore remoteParticipants = new RemoteParticipantStore();
@@ -203,7 +207,7 @@ public final class RtpsParticipant implements Closeable {
                 if (endpoint instanceof RtpsDataWriter<?> writer) writer.announceHeartbeat();
             }
         } catch (IOException | RuntimeException e) {
-            System.getLogger(RtpsParticipant.class.getName()).log(System.Logger.Level.WARNING, "RTPS announcement failed", e);
+            LOGGER.log(Level.WARNING, "RTPS announcement failed", e);
         }
     }
 

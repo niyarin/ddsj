@@ -11,6 +11,8 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
 import java.net.NetworkInterface;
+import java.util.Enumeration;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class UdpRtpsTransport implements RtpsTransport {
@@ -25,9 +27,9 @@ public final class UdpRtpsTransport implements RtpsTransport {
         if (config.networkInterface().isPresent()) {
             socket.setNetworkInterface(config.networkInterface().get());
         }
-        this.localAddress = config.networkInterface()
-                .flatMap(UdpRtpsTransport::firstIpv4Address)
-                .orElse(InetAddress.getLocalHost());
+        Optional<InetAddress> selectedAddress = config.networkInterface()
+                .flatMap(UdpRtpsTransport::firstIpv4Address);
+        this.localAddress = selectedAddress.isPresent() ? selectedAddress.get() : InetAddress.getLocalHost();
     }
 
     @Override
@@ -94,10 +96,15 @@ public final class UdpRtpsTransport implements RtpsTransport {
         socket.close();
     }
 
-    private static java.util.Optional<InetAddress> firstIpv4Address(NetworkInterface networkInterface) {
-        return networkInterface.inetAddresses()
-                .filter(Inet4Address.class::isInstance)
-                .findFirst();
+    private static Optional<InetAddress> firstIpv4Address(NetworkInterface networkInterface) {
+        Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
+        while (addresses.hasMoreElements()) {
+            InetAddress address = addresses.nextElement();
+            if (address instanceof Inet4Address) {
+                return Optional.of(address);
+            }
+        }
+        return Optional.empty();
     }
 
     private static final class UdpRtpsReceiver implements Closeable {

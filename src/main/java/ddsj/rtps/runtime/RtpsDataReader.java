@@ -29,8 +29,11 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public final class RtpsDataReader<T> implements Closeable {
+    private static final Logger LOGGER = Logger.getLogger(RtpsDataReader.class.getName());
 
     private final LocalEndpoint endpoint;
     private final PayloadSerializer<T> serializer;
@@ -356,8 +359,8 @@ public final class RtpsDataReader<T> implements Closeable {
             try {
                 onDeserializationError.accept(error);
             } catch (RuntimeException callbackError) {
-                System.getLogger(RtpsDataReader.class.getName()).log(
-                        System.Logger.Level.WARNING, "Deserialization error callback failed", callbackError);
+                LOGGER.log(
+                        Level.WARNING, "Deserialization error callback failed", callbackError);
             }
             return;
         }

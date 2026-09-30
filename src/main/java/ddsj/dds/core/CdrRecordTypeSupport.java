@@ -45,8 +45,10 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
                     throw new IllegalArgumentException("Unsupported CDR component: " + components[i]);
                 }
                 accessors[i] = components[i].getAccessor();
-                if (!accessors[i].trySetAccessible()) {
-                    throw new IllegalArgumentException("Inaccessible record component: " + components[i]);
+                try {
+                    accessors[i].setAccessible(true);
+                } catch (RuntimeException e) {
+                    throw new IllegalArgumentException("Inaccessible record component: " + components[i], e);
                 }
                 // Check for @CdrFixedLength annotation
                 CdrFixedLength fixedLen = components[i].getAnnotation(CdrFixedLength.class);
@@ -63,8 +65,10 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
                 }
             }
             constructor = type.getDeclaredConstructor(types);
-            if (!constructor.trySetAccessible()) {
-                throw new IllegalArgumentException("Inaccessible record constructor: " + type.getName());
+            try {
+                constructor.setAccessible(true);
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("Inaccessible record constructor: " + type.getName(), e);
             }
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException("Cannot inspect record: " + type.getName(), e);
