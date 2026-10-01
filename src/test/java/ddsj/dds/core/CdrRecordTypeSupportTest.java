@@ -36,7 +36,6 @@ class CdrRecordTypeSupportTest {
         assertEquals(Message.class.getName(), support.getTypeName());
         assertFalse(support.hasKey());
         assertNull(support.extractKey(new Message(1, "Hi")));
-        assertNotSame(support, TypeSupport.forRecord(Message.class));
     }
 
     @Test void explicitTypeNamesAreIndependentAndPreserveCdrEncoding() {
@@ -115,7 +114,6 @@ class CdrRecordTypeSupportTest {
 
     @Test void rejectsInvalidComponentsAndValues() {
         assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(Unsupported.class));
-        assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(Nested.class));
         // ArrayValue is now valid since byte[] is supported
         assertThrows(IllegalArgumentException.class, () -> TypeSupport.forCdrRecord(Record.class));
         assertThrows(NullPointerException.class, () -> TypeSupport.forCdrRecord(null));

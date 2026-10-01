@@ -1,6 +1,5 @@
 package ddsj.dds.core;
 
-import ddsj.dds.exception.ReturnCode;
 import ddsj.rtps.runtime.PayloadSerializer;
 
 import java.util.Objects;
@@ -72,25 +71,21 @@ public interface TypeSupport<T> {
     }
 
     /**
-     * Creates cached, unkeyed support for a record with primitive or String components.
-     * Uses a DDSJDK-specific binary format, not CDR. The discovery type name is
-     * the record's binary class name. Null strings and unsupported components
-     * are rejected. Both endpoints must use the same record schema.
-     */
-    static <T extends Record> TypeSupport<T> forRecord(Class<T> type) {
-        return RecordTypeSupport.of(type);
-    }
-
-    /**
      * Creates cached, unkeyed plain CDR (XCDR1) support for a record.
      * Components are encoded in declaration order with CDR alignment. Serialization
-     * includes a CDR_LE encapsulation header; deserialization accepts CDR_LE and CDR_BE.
+     * includes a CDR_LE encapsulation header; deserialization accepts plain XCDR1
+     * and XCDR2 in either byte order. Records are treated as FINAL structs.
      * Primitives map to their IDL counterparts: byte to octet, short to short,
      * int to long, long to long long, and char to an 8-bit IDL char (0..255).
-     * Strings use UTF-8 with a length including the terminating NUL. Null strings,
-     * embedded NULs, invalid Unicode, and non-primitive/non-String components are rejected.
+     * Strings use UTF-8 with a length including the terminating NUL. Nested records
+     * and one-dimensional arrays of supported types are accepted. Arrays are sequences
+     * unless annotated with {@link CdrFixedLength}. Null values, embedded NULs,
+     * invalid Unicode, boxed primitives, and recursive record schemas are rejected.
      * The discovery type name is the record's binary class name. Both endpoints must
-     * use the same schema. Nested records, arrays, keys, and XCDR2 are not supported.
+     * use the same schema. Keys and schema evolution are not supported.
+     * Decoding limits total array elements to {@link ddsj.cdr.CdrReader#DEFAULT_MAX_ARRAY_ELEMENTS};
+     * use {@link ddsj.cdr.CdrPayloadSerializer} with {@link CdrRecordTypeSupport#codec()}
+     * to configure another limit.
      * Use with {@code participant.createTopic(name, MyRecord.class, TypeSupport.forCdrRecord(MyRecord.class))}.
      */
     static <T extends Record> TypeSupport<T> forCdrRecord(Class<T> type) {

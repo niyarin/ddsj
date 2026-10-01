@@ -8,7 +8,7 @@ import java.lang.annotation.Target;
 /**
  * Specifies a fixed-length array in CDR serialization.
  * <p>
- * Use on record components of type byte[] to indicate a fixed-length
+ * Use on one-dimensional array record components to indicate a fixed-length
  * array instead of a variable-length sequence.
  * <p>
  * Example:
