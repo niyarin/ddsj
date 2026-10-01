@@ -24,6 +24,26 @@ class FragmentSenderTest {
     private static final EntityId WRITER_ID = new EntityId(new byte[]{0x00, 0x00, 0x02, 0x03});
 
     @Test
+    void identityOnFirstFragmentSurvivesReorderingAndMetadataFreeFinalFragment() {
+        var identity = new SampleIdentity(GUID_PREFIX.toGuid(WRITER_ID), 123);
+        for (int[] order : new int[][]{{1, 2, 3}, {2, 1, 3}, {3, 2, 1}}) {
+            var assembler = new FragmentAssembler();
+            Optional<UserDataSample> result = Optional.empty();
+            for (int number : order) {
+                var builder = new RtpsMessageBuilder(GUID_PREFIX);
+                builder.dataFrag(READER_ID, WRITER_ID, 7, number, 1, 2, 6,
+                        new byte[]{(byte) (number * 2 - 1), (byte) (number * 2)},
+                        number == 1 ? identity : null);
+                byte[] packet = builder.bytes();
+                var fragment = RtpsUserDataParser.readDataFragments(packet, packet.length, READER_ID).get(0);
+                result = assembler.addFragment(fragment);
+            }
+            assertEquals(Optional.of(identity), result.orElseThrow().relatedSampleIdentity());
+            assertArrayEquals(new byte[]{1, 2, 3, 4, 5, 6}, result.orElseThrow().payload());
+        }
+    }
+
+    @Test
     void requiresFragmentation_belowThreshold() {
         FragmentSender sender = new FragmentSender(1024, 64000);
         assertFalse(sender.requiresFragmentation(new byte[1000]));

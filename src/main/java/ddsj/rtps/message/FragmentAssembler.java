@@ -52,7 +52,7 @@ public final class FragmentAssembler {
                     fragment.writerGuid(),
                     fragment.sequenceNumber(),
                     assembled,
-                    fragment.timestamp()));
+                    pending.timestamp, pending.relatedIdentity()));
         }
 
         return Optional.empty();
@@ -94,6 +94,11 @@ public final class FragmentAssembler {
         private final boolean[] received;
         private final Optional<RtpsTimestamp> timestamp;
         private int receivedCount;
+        private Optional<SampleIdentity> relatedIdentity = Optional.empty();
+
+        synchronized Optional<SampleIdentity> relatedIdentity() {
+            return relatedIdentity;
+        }
 
         PendingSample(int sampleSize, int fragmentSize, int totalFragments, Optional<RtpsTimestamp> timestamp) {
             this.buffer = new byte[sampleSize];
@@ -105,6 +110,9 @@ public final class FragmentAssembler {
         }
 
         synchronized void addFragment(DataFragment fragment) {
+            if (fragment.relatedSampleIdentity().isPresent()) {
+                relatedIdentity = fragment.relatedSampleIdentity();
+            }
             byte[] data = fragment.fragmentData();
             int startingNum = fragment.fragmentStartingNum();
             int fragmentsInSubmessage = fragment.fragmentsInSubmessage();

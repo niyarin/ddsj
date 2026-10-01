@@ -104,6 +104,77 @@ class RtpsParticipantTest {
         }
     }
 
+    @Test void responseIdentitySurvivesAckNackForCompleteAndFragmentedSamples() throws Exception {
+        for (int size : new int[]{12, 70_000}) {
+            var transport = new FakeTransport();
+            try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+                var endpoint = new LocalEndpoint("responses", "bytes", EndpointQos.builder()
+                        .reliability(EndpointQos.ReliabilityKind.RELIABLE).build());
+                var writer = participant.createWriter(endpoint, CODEC);
+                var reader = participant.createReader(endpoint, CODEC);
+                var identity = new SampleIdentity(participant.guidPrefix().toGuid(RtpsEntity.USER_WRITER_NO_KEY), 77);
+                byte[] payload = new byte[size];
+                java.util.Arrays.fill(payload, (byte) 42);
+                writer.write(payload, identity);
+                // Drop the initial transmission and request the whole sample again.
+                transport.userSent.clear();
+                var ack = new RtpsMessageBuilder(participant.guidPrefix());
+                ack.ackNack(reader.guid().entityId(), writer.guid().entityId(), 1, Set.of(1L), 1);
+                transport.deliverUser(ack.bytes());
+                assertFalse(transport.userSent.isEmpty());
+                for (byte[] packet : List.copyOf(transport.userSent)) transport.deliverUser(packet);
+                var received = reader.pollWithMetadata().orElseThrow();
+                assertEquals(java.util.Optional.of(identity), received.relatedSampleIdentity());
+                assertArrayEquals(payload, received.data());
+            }
+        }
+    }
+
+    @Test void responseIdentitySurvivesMissingFragmentRetransmission() throws Exception {
+        var transport = new FakeTransport();
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var endpoint = new LocalEndpoint("responses", "bytes", EndpointQos.builder()
+                    .reliability(EndpointQos.ReliabilityKind.RELIABLE).build());
+            var writer = participant.createWriter(endpoint, CODEC);
+            var reader = participant.createReader(endpoint, CODEC);
+            var identity = new SampleIdentity(writer.guid(), 91);
+            byte[] payload = new byte[70_000];
+            for (int i = 0; i < payload.length; i++) payload[i] = (byte) i;
+            writer.write(payload, identity);
+            var packets = List.copyOf(transport.userSent);
+            assertTrue(packets.size() > 1);
+            // Deliver in reverse order and omit fragment 1.
+            for (int i = packets.size() - 1; i > 0; i--) transport.deliverUser(packets.get(i));
+            assertTrue(reader.pollWithMetadata().isEmpty());
+            transport.userSent.clear();
+            var nack = new RtpsMessageBuilder(participant.guidPrefix());
+            nack.nackFrag(reader.guid().entityId(), writer.guid().entityId(), 1, Set.of(1), 1);
+            transport.deliverUser(nack.bytes());
+            var resent = transport.userSent.stream().flatMap(packet -> RtpsUserDataParser
+                    .readDataFragments(packet, packet.length, reader.guid().entityId()).stream()).toList();
+            assertEquals(1, resent.size());
+            assertEquals(java.util.Optional.of(identity), resent.get(0).relatedSampleIdentity());
+            for (byte[] packet : List.copyOf(transport.userSent)) transport.deliverUser(packet);
+            var received = reader.pollWithMetadata().orElseThrow();
+            assertEquals(java.util.Optional.of(identity), received.relatedSampleIdentity());
+            assertArrayEquals(payload, received.data());
+        }
+    }
+
+    @Test void historyEvictsIdentityTogetherWithPayload() {
+        var history = new ddsj.rtps.history.WriterHistoryCache(1);
+        var identity = new SampleIdentity(new GuidPrefix(new byte[12]).toGuid(RtpsEntity.USER_WRITER_NO_KEY), 5);
+        assertTrue(history.tryPut(1, new byte[]{1}, identity));
+        assertEquals(java.util.Optional.of(identity), history.relatedSampleIdentity(1));
+        history.put(2, new byte[]{2});
+        assertTrue(history.get(1).isEmpty());
+        assertTrue(history.relatedSampleIdentity(1).isEmpty());
+        assertTrue(history.relatedSampleIdentity(2).isEmpty());
+        assertTrue(history.tryPut(2, new byte[]{2}, identity));
+        history.clear();
+        assertTrue(history.relatedSampleIdentity(2).isEmpty());
+    }
+
     @Test void sharedTransportPreservesUserUnicastLocator() throws Exception {
         var delegate = new FakeTransport();
         try (var transport = new ParticipantTransport(delegate)) {

@@ -72,6 +72,15 @@ public final class RtpsMessageBuilder {
         body.writeBytes(RtpsIo.intLe((int) (sequenceNumber >>> 32)));
         body.writeBytes(RtpsIo.intLe((int) sequenceNumber));
 
+        writeRelatedIdentity(body, relatedGuid, relatedSequenceNumber);
+
+        body.writeBytes(serializedPayload);
+
+        // flags: 0x07 = little-endian (0x01) + Inline QoS present (0x02) + Data present (0x04)
+        submessage(RtpsSubmessageKind.DATA, 0x07, body.toByteArray());
+    }
+
+    private static void writeRelatedIdentity(ByteArrayOutputStream body, Guid relatedGuid, long relatedSequenceNumber) {
         // Inline QoS: PID_RELATED_SAMPLE_IDENTITY (0x0083) - 24 bytes
         body.writeBytes(RtpsIo.shortLe(ParameterId.RELATED_SAMPLE_IDENTITY));
         body.writeBytes(RtpsIo.shortLe(24)); // length
@@ -89,16 +98,18 @@ public final class RtpsMessageBuilder {
         // PID_SENTINEL
         body.writeBytes(RtpsIo.shortLe(ParameterId.SENTINEL));
         body.writeBytes(RtpsIo.shortLe(0));
-
-        body.writeBytes(serializedPayload);
-
-        // flags: 0x07 = little-endian (0x01) + Inline QoS present (0x02) + Data present (0x04)
-        submessage(RtpsSubmessageKind.DATA, 0x07, body.toByteArray());
     }
 
     public void dataFrag(EntityId readerId, EntityId writerId, long sequenceNumber,
                          int fragmentStartingNum, int fragmentsInSubmessage,
                          int fragmentSize, int sampleSize, byte[] fragmentData) {
+        dataFrag(readerId, writerId, sequenceNumber, fragmentStartingNum, fragmentsInSubmessage,
+                fragmentSize, sampleSize, fragmentData, null);
+    }
+
+    public void dataFrag(EntityId readerId, EntityId writerId, long sequenceNumber,
+                         int fragmentStartingNum, int fragmentsInSubmessage,
+                         int fragmentSize, int sampleSize, byte[] fragmentData, SampleIdentity relatedIdentity) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes(RtpsIo.shortLe(0)); // extraFlags
         body.writeBytes(RtpsIo.shortLe(28)); // octetsToInlineQos
@@ -110,8 +121,11 @@ public final class RtpsMessageBuilder {
         body.writeBytes(RtpsIo.shortLe(fragmentsInSubmessage));
         body.writeBytes(RtpsIo.shortLe(fragmentSize));
         body.writeBytes(RtpsIo.intLe(sampleSize));
+        if (relatedIdentity != null) {
+            writeRelatedIdentity(body, relatedIdentity.writerGuid(), relatedIdentity.sequenceNumber());
+        }
         body.writeBytes(fragmentData);
-        submessage(RtpsSubmessageKind.DATA_FRAG, 0x01, body.toByteArray());
+        submessage(RtpsSubmessageKind.DATA_FRAG, relatedIdentity == null ? 0x01 : 0x03, body.toByteArray());
     }
 
     public void dataDispose(EntityId readerId, EntityId writerId, long sequenceNumber, Guid endpointGuid) {

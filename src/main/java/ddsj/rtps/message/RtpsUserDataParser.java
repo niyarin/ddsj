@@ -74,6 +74,7 @@ public final class RtpsUserDataParser {
                         submessage.body(),
                         expectedReaderId,
                         submessage.littleEndian(),
+                        submessage.flags(),
                         submessage.timestamp()).ifPresent(result::add);
             }
         }
@@ -162,6 +163,7 @@ public final class RtpsUserDataParser {
             byte[] body,
             EntityId expectedReaderId,
             boolean littleEndian,
+            int submessageFlags,
             Optional<RtpsTimestamp> timestamp) {
         // Minimum size: extraFlags(2) + octetsToInlineQos(2) + readerId(4) + writerId(4)
         //              + sequenceNumber(8) + fragmentStartingNum(4) + fragmentsInSubmessage(2)
@@ -182,8 +184,15 @@ public final class RtpsUserDataParser {
         int sampleSize = RtpsIo.readInt(body, 28, littleEndian);
 
         int fragmentDataOffset = 4 + octetsToInlineQos;
-        if (fragmentDataOffset > body.length) {
+        if (fragmentDataOffset < 32 || fragmentDataOffset > body.length) {
             return Optional.empty();
+        }
+        Optional<SampleIdentity> relatedIdentity = Optional.empty();
+        if ((submessageFlags & DATA_FLAG_INLINE_QOS) != 0) {
+            var inline = parseInlineQos(body, fragmentDataOffset, body.length, littleEndian);
+            if (inline.isEmpty()) return Optional.empty();
+            fragmentDataOffset = inline.get().payloadOffset();
+            relatedIdentity = inline.get().relatedSampleIdentity();
         }
         byte[] fragmentData = Arrays.copyOfRange(body, fragmentDataOffset, body.length);
 
@@ -195,7 +204,7 @@ public final class RtpsUserDataParser {
                 fragmentSize,
                 sampleSize,
                 fragmentData,
-                timestamp));
+                timestamp, relatedIdentity));
     }
 
     private static Optional<Heartbeat> parseHeartbeat(

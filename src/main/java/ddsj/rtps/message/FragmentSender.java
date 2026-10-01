@@ -75,6 +75,12 @@ public final class FragmentSender {
             long sequenceNumber,
             byte[] payload,
             MessageSender sender) throws IOException {
+        sendFragmented(guidPrefix, readerId, writerId, sequenceNumber, payload, null, sender);
+    }
+
+    public void sendFragmented(GuidPrefix guidPrefix, EntityId readerId, EntityId writerId,
+                               long sequenceNumber, byte[] payload, SampleIdentity relatedIdentity,
+                               MessageSender sender) throws IOException {
 
         int sampleSize = payload.length;
         int totalFragments = (sampleSize + fragmentSize - 1) / fragmentSize;
@@ -83,7 +89,7 @@ public final class FragmentSender {
         for (int fragNum = 1; fragNum <= totalFragments; fragNum++) {
             byte[] fragMessage = buildFragmentMessage(
                     guidPrefix, readerId, writerId, sequenceNumber,
-                    fragNum, payload, sampleSize);
+                    fragNum, payload, sampleSize, relatedIdentity);
             sender.send(fragMessage);
         }
     }
@@ -101,6 +107,12 @@ public final class FragmentSender {
             long sequenceNumber,
             Set<Integer> fragmentNumbers,
             MessageSender sender) throws IOException {
+        return resendFragments(guidPrefix, readerId, writerId, sequenceNumber, fragmentNumbers, null, sender);
+    }
+
+    public boolean resendFragments(GuidPrefix guidPrefix, EntityId readerId, EntityId writerId,
+                                   long sequenceNumber, Set<Integer> fragmentNumbers,
+                                   SampleIdentity relatedIdentity, MessageSender sender) throws IOException {
 
         FragmentedSample sample = lookup(sequenceNumber);
         if (sample == null) {
@@ -113,7 +125,7 @@ public final class FragmentSender {
             }
             byte[] fragMessage = buildFragmentMessage(
                     guidPrefix, readerId, writerId, sequenceNumber,
-                    fragNum, sample.payload, sample.payload.length);
+                    fragNum, sample.payload, sample.payload.length, relatedIdentity);
             sender.send(fragMessage);
         }
         return true;
@@ -175,7 +187,7 @@ public final class FragmentSender {
             long sequenceNumber,
             int fragmentNum,
             byte[] payload,
-            int sampleSize) {
+            int sampleSize, SampleIdentity relatedIdentity) {
 
         int startOffset = (fragmentNum - 1) * fragmentSize;
         int endOffset = Math.min(startOffset + fragmentSize, sampleSize);
@@ -183,7 +195,7 @@ public final class FragmentSender {
 
         RtpsMessageBuilder builder = new RtpsMessageBuilder(guidPrefix);
         builder.dataFrag(readerId, writerId, sequenceNumber,
-                fragmentNum, 1, fragmentSize, sampleSize, fragmentData);
+                fragmentNum, 1, fragmentSize, sampleSize, fragmentData, relatedIdentity);
         return builder.bytes();
     }
 

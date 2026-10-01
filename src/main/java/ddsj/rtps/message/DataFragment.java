@@ -13,10 +13,18 @@ public record DataFragment(
         int fragmentSize,
         int sampleSize,
         byte[] fragmentData,
-        Optional<RtpsTimestamp> timestamp) {
+        Optional<RtpsTimestamp> timestamp,
+        Optional<SampleIdentity> relatedSampleIdentity) {
 
     public DataFragment {
         fragmentData = fragmentData.clone();
+    }
+
+    public DataFragment(Guid writerGuid, long sequenceNumber, int fragmentStartingNum,
+                        int fragmentsInSubmessage, int fragmentSize, int sampleSize, byte[] fragmentData,
+                        Optional<RtpsTimestamp> timestamp) {
+        this(writerGuid, sequenceNumber, fragmentStartingNum, fragmentsInSubmessage,
+                fragmentSize, sampleSize, fragmentData, timestamp, Optional.empty());
     }
 
     public DataFragment(Guid writerGuid, long sequenceNumber, int fragmentStartingNum,

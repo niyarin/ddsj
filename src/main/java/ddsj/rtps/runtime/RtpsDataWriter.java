@@ -136,7 +136,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         }
         byte[] payload = serializer.serialize(value);
         long sequenceNumber = userSequence.get();
-        if (!history.tryPut(sequenceNumber, payload)) {
+        if (!history.tryPut(sequenceNumber, payload, relatedSampleIdentity)) {
             throw new IOException("writer history resource limit reached");
         }
         userSequence.incrementAndGet();
@@ -181,13 +181,16 @@ public final class RtpsDataWriter<T> implements Closeable {
             return;
         }
         try {
+            var relatedIdentity = history.relatedSampleIdentity(nackFrag.writerSequenceNumber()).orElse(null);
             boolean resent = fragmentSender.resendFragments(
                     guidPrefix,
                     nackFrag.readerId(),
                     entityId,
                     nackFrag.writerSequenceNumber(),
                     nackFrag.requestedFragmentNumbers(),
-                    this::sendToUserLocators);
+                    relatedIdentity,
+                    message -> sendToUserLocators(message, relatedIdentity == null
+                            ? null : relatedIdentity.writerGuid().prefix()));
             if (!resent && history.get(nackFrag.writerSequenceNumber()).isEmpty()) {
                 sendGap(nackFrag.readerId(), nackFrag.writerSequenceNumber());
             }
@@ -203,7 +206,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         for (long sequenceNumber : ackNack.requestedSequenceNumbers()) {
             var payload = history.get(sequenceNumber);
             if (payload.isPresent()) {
-                sendUserData(sequenceNumber, payload.get(), null);
+                sendUserData(sequenceNumber, payload.get(), history.relatedSampleIdentity(sequenceNumber).orElse(null));
             } else {
                 sendGap(ackNack.readerId(), sequenceNumber);
             }
@@ -212,7 +215,7 @@ public final class RtpsDataWriter<T> implements Closeable {
 
     private void sendUserData(long sequenceNumber, byte[] payload, SampleIdentity relatedSampleIdentity) throws IOException {
         if (fragmentSender.requiresFragmentation(payload)) {
-            sendUserDataFragmented(sequenceNumber, payload);
+            sendUserDataFragmented(sequenceNumber, payload, relatedSampleIdentity);
         } else {
             sendUserDataComplete(sequenceNumber, payload, relatedSampleIdentity);
         }
@@ -237,14 +240,16 @@ public final class RtpsDataWriter<T> implements Closeable {
         }
     }
 
-    private void sendUserDataFragmented(long sequenceNumber, byte[] payload) throws IOException {
+    private void sendUserDataFragmented(long sequenceNumber, byte[] payload, SampleIdentity relatedSampleIdentity) throws IOException {
         fragmentSender.sendFragmented(
                 guidPrefix,
                 RtpsEntity.UNKNOWN,
                 entityId,
                 sequenceNumber,
                 payload,
-                this::sendToUserLocators);
+                relatedSampleIdentity,
+                message -> sendToUserLocators(message, relatedSampleIdentity == null
+                        ? null : relatedSampleIdentity.writerGuid().prefix()));
     }
 
     private void sendUserHeartbeat() throws IOException {

@@ -2,6 +2,7 @@ package ddsj.rtps.history;
 
 import ddsj.rtps.qos.EndpointQos.HistoryKind;
 import java.util.Optional;
+import ddsj.rtps.message.SampleIdentity;
 import java.util.TreeMap;
 import java.util.Objects;
 
@@ -9,7 +10,7 @@ import java.util.Objects;
 public final class WriterHistoryCache {
     private final int capacity;
     private final HistoryKind kind;
-    private final TreeMap<Long, byte[]> samples = new TreeMap<>();
+    private final TreeMap<Long, Entry> samples = new TreeMap<>();
 
     public WriterHistoryCache() {
         this(128);
@@ -27,10 +28,13 @@ public final class WriterHistoryCache {
 
     /** Rejects a new KEEP_ALL sample when full; existing samples are never evicted. */
     public synchronized boolean tryPut(long sequenceNumber, byte[] payload) {
+        return tryPut(sequenceNumber, payload, null);
+    }
+    public synchronized boolean tryPut(long sequenceNumber, byte[] payload, SampleIdentity relatedIdentity) {
         if (kind == HistoryKind.KEEP_ALL && samples.size() >= capacity && !samples.containsKey(sequenceNumber)) {
             return false;
         }
-        samples.put(sequenceNumber, payload.clone());
+        samples.put(sequenceNumber, new Entry(payload.clone(), relatedIdentity));
         while (samples.size() > capacity) {
             samples.pollFirstEntry();
         }
@@ -42,8 +46,13 @@ public final class WriterHistoryCache {
         }
     }
     public synchronized Optional<byte[]> get(long sequenceNumber) {
-        return Optional.ofNullable(samples.get(sequenceNumber)).map(byte[]::clone);
+        return Optional.ofNullable(samples.get(sequenceNumber)).map(entry -> entry.payload().clone());
     }
+    public synchronized Optional<SampleIdentity> relatedSampleIdentity(long sequenceNumber) {
+        return Optional.ofNullable(samples.get(sequenceNumber)).map(Entry::relatedIdentity);
+    }
+    private record Entry(byte[] payload, SampleIdentity relatedIdentity) {}
+
     public synchronized Optional<Long> firstSequenceNumber() {
         return samples.isEmpty() ? Optional.empty() : Optional.of(samples.firstKey());
     }
