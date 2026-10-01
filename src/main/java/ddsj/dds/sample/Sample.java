@@ -2,6 +2,7 @@ package ddsj.dds.sample;
 
 import ddsj.dds.instance.SampleInfo;
 import ddsj.rtps.message.SampleIdentity;
+import ddsj.rtps.types.Guid;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -18,16 +19,26 @@ import java.util.Optional;
  * @param info the sample metadata
  * @param relatedSampleIdentity for DDS-RPC, the identity to correlate request/response
  * @param writerSequenceNumber the DATA writerSN (for DDS-RPC response correlation)
+ * @param writerGuid GUID of the writer that produced this sample; empty when not supplied
  */
-public record Sample<T>(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity, long writerSequenceNumber) {
+public record Sample<T>(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity, long writerSequenceNumber, Optional<Guid> writerGuid) {
     /**
      * Creates a sample with validated parameters.
      *
-     * @throws NullPointerException if info is null
+     * @throws NullPointerException if info, relatedSampleIdentity, or writerGuid is null
      */
     public Sample {
         Objects.requireNonNull(info, "info");
         Objects.requireNonNull(relatedSampleIdentity, "relatedSampleIdentity");
+        Objects.requireNonNull(writerGuid, "writerGuid");
+    }
+
+    /**
+     * Creates a sample without a known source writer GUID.
+     */
+    public Sample(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity,
+                  long writerSequenceNumber) {
+        this(data, info, relatedSampleIdentity, writerSequenceNumber, Optional.empty());
     }
 
     /**

@@ -15,6 +15,7 @@ import ddsj.rtps.message.SampleIdentity;
 import ddsj.rtps.runtime.PayloadSerializer;
 import ddsj.rtps.runtime.ReceivedSample;
 import ddsj.rtps.runtime.RtpsDataReader;
+import ddsj.rtps.types.Guid;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -422,7 +423,7 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
                     0, 0, 0, 0, 0,
                     true
             );
-            sampleCache.add(new CachedSample<>(data, sampleInfo, received.relatedSampleIdentity(), received.sequenceNumber()));
+            sampleCache.add(new CachedSample<>(data, sampleInfo, received.relatedSampleIdentity(), received.sequenceNumber(), received.writerGuid()));
             info.isNew = false;
         }
     }
@@ -459,15 +460,17 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
         final SampleInfo originalInfo;
         final Optional<SampleIdentity> relatedSampleIdentity;
         final long writerSequenceNumber;
+        final Guid writerGuid;
         SampleState sampleState;
         ViewState viewState;
         InstanceState instanceState;
 
-        CachedSample(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity, long writerSequenceNumber) {
+        CachedSample(T data, SampleInfo info, Optional<SampleIdentity> relatedSampleIdentity, long writerSequenceNumber, Guid writerGuid) {
             this.data = data;
             this.originalInfo = info;
             this.relatedSampleIdentity = relatedSampleIdentity;
             this.writerSequenceNumber = writerSequenceNumber;
+            this.writerGuid = writerGuid;
             this.sampleState = info.sampleState();
             this.viewState = info.viewState();
             this.instanceState = info.instanceState();
@@ -491,7 +494,7 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
                     originalInfo.absoluteGenerationRank(),
                     originalInfo.validData()
             );
-            return new Sample<>(data, currentInfo, relatedSampleIdentity, writerSequenceNumber);
+            return new Sample<>(data, currentInfo, relatedSampleIdentity, writerSequenceNumber, Optional.of(writerGuid));
         }
     }
 
