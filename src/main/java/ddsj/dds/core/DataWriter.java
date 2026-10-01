@@ -119,6 +119,27 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
     }
 
     /**
+     * Writes an RPC request and returns its source sample identity.
+     * Compare this identity with a response's relatedSampleIdentity to correlate it.
+     * Successful return does not imply delivery or acknowledgement by a reader.
+     *
+     * @param data the request to write
+     * @return the actual writer GUID and sequence number used to send the request
+     * @throws DdsException if the writer is closed or the request cannot be written
+     */
+    public SampleIdentity writeRequest(T data) {
+        ensureOpen();
+        try {
+            if (topic.getTypeSupport().hasKey()) {
+                registerInstance(data);
+            }
+            return rtpsWriter.writeRequest(data);
+        } catch (IOException e) {
+            throw new DdsException(ReturnCode.ERROR, "Failed to write RPC request", e);
+        }
+    }
+
+    /**
      * Writes a data value with a timestamp.
      *
      * @param data the data to write
@@ -135,7 +156,7 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
      * Writes a data value with related sample identity (for DDS-RPC service responses).
      *
      * @param data the data to write
-     * @param relatedSampleIdentity identifies the related request (from request's Inline QoS)
+     * @param relatedSampleIdentity identifies the related request (its source writer GUID and sequence number)
      * @return OK if successful
      */
     public ReturnCode writeWithRelatedSampleIdentity(T data, SampleIdentity relatedSampleIdentity) {

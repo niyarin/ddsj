@@ -114,6 +114,23 @@ public final class RtpsDataWriter<T> implements Closeable {
      * @param relatedSampleIdentity for service responses, identifies the related request
      */
     public synchronized void write(T value, SampleIdentity relatedSampleIdentity) throws IOException {
+        writeInternal(value, relatedSampleIdentity);
+    }
+
+    /**
+     * Writes a request and returns the identity used in its DATA or DATA_FRAG messages.
+     * The sequence number shares the same sequence space as ordinary writes.
+     * Successful return does not imply delivery or acknowledgement by a reader.
+     *
+     * @param value the request to write
+     * @return the actual writer GUID and sequence number of the request
+     * @throws IOException if the writer is closed, history is full, or sending fails
+     */
+    public synchronized SampleIdentity writeRequest(T value) throws IOException {
+        return writeInternal(value, null);
+    }
+
+    private SampleIdentity writeInternal(T value, SampleIdentity relatedSampleIdentity) throws IOException {
         if (!running.get()) {
             throw new IOException("writer is closed");
         }
@@ -125,6 +142,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         userSequence.incrementAndGet();
         sendUserData(sequenceNumber, payload, relatedSampleIdentity);
         livelinessAsserter.onDataWritten();
+        return new SampleIdentity(guid(), sequenceNumber);
     }
 
     /**

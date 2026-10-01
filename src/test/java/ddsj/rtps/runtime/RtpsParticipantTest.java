@@ -27,6 +27,83 @@ class RtpsParticipantTest {
         return new LocalEndpoint(topic, "bytes", EndpointQos.DEFAULT);
     }
 
+    @Test void requestIdentityMatchesReceivedRequestAndRelatedResponse() throws Exception {
+        var transport = new FakeTransport();
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var requests = participant.createWriter(endpoint("requests"), CODEC);
+            var requestReader = participant.createReader(endpoint("requests"), CODEC);
+            var responses = participant.createWriter(endpoint("responses"), CODEC);
+            var responseReader = participant.createReader(endpoint("responses"), CODEC);
+            requests.write(new byte[]{0});
+            var identity = requests.writeRequest(new byte[]{1});
+            assertEquals(new SampleIdentity(requests.guid(), 2), identity);
+            transport.deliverLastUserPacket();
+            var request = requestReader.pollWithMetadata().orElseThrow();
+            assertEquals(identity, new SampleIdentity(request.writerGuid(), request.sequenceNumber()));
+            assertTrue(request.relatedSampleIdentity().isEmpty());
+            responses.write(new byte[]{2}, new SampleIdentity(request.writerGuid(), request.sequenceNumber()));
+            transport.deliverLastUserPacket();
+            var response = responseReader.pollWithMetadata().orElseThrow();
+            assertEquals(identity, response.relatedSampleIdentity().orElseThrow());
+            assertNotEquals(identity.writerGuid(), response.writerGuid());
+            assertEquals(3, requests.writeRequest(new byte[]{3}).sequenceNumber());
+        }
+    }
+
+    @Test void fragmentedRequestUsesReturnedIdentityForEveryFragment() throws Exception {
+        var transport = new FakeTransport();
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var writer = participant.createWriter(endpoint("requests"), CODEC);
+            var identity = writer.writeRequest(new byte[100_000]);
+            var fragments = transport.userSent.stream().flatMap(packet ->
+                    RtpsUserDataParser.readDataFragments(packet, packet.length, RtpsEntity.UNKNOWN).stream()).toList();
+            assertTrue(fragments.size() > 1);
+            for (var fragment : fragments) {
+                assertEquals(identity, new SampleIdentity(fragment.writerGuid(), fragment.sequenceNumber()));
+            }
+        }
+    }
+
+    @Test void concurrentRequestsReturnTheirOwnPacketIdentity() throws Exception {
+        var transport = new FakeTransport();
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var writer = participant.createWriter(endpoint("requests"), CODEC);
+            var executor = java.util.concurrent.Executors.newFixedThreadPool(4);
+            try {
+                var results = new java.util.ArrayList<java.util.concurrent.Future<SampleIdentity>>();
+                for (int i = 0; i < 32; i++) {
+                    byte value = (byte) i;
+                    results.add(executor.submit(() -> writer.writeRequest(new byte[]{value})));
+                }
+                var identities = new java.util.HashSet<SampleIdentity>();
+                for (int i = 0; i < results.size(); i++) {
+                    var identity = results.get(i).get(5, java.util.concurrent.TimeUnit.SECONDS);
+                    assertTrue(identities.add(identity));
+                    final byte value = (byte) i;
+                    var sample = transport.userSent.stream().flatMap(packet ->
+                            RtpsUserDataParser.readUserSamples(packet, packet.length, RtpsEntity.UNKNOWN).stream())
+                            .filter(item -> item.payload()[0] == value).findFirst().orElseThrow();
+                    assertEquals(identity, new SampleIdentity(sample.writerGuid(), sample.sequenceNumber()));
+                }
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test void failedRequestThrowsAndDoesNotReuseAnAttemptedSequence() throws Exception {
+        var transport = new FakeTransport();
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var writer = participant.createWriter(endpoint("requests"), CODEC);
+            transport.failUserSend = true;
+            assertThrows(IOException.class, () -> writer.writeRequest(new byte[]{1}));
+            transport.failUserSend = false;
+            assertEquals(new SampleIdentity(writer.guid(), 2), writer.writeRequest(new byte[]{2}));
+            writer.close();
+            assertThrows(IOException.class, () -> writer.writeRequest(new byte[]{3}));
+        }
+    }
+
     @Test void sharedTransportPreservesUserUnicastLocator() throws Exception {
         var delegate = new FakeTransport();
         try (var transport = new ParticipantTransport(delegate)) {
@@ -261,7 +338,11 @@ class RtpsParticipantTest {
             if (failMetaSend) throw new IOException("injected send failure");
             metaSent.add(message.clone());
         }
-        public void sendUserData(byte[] message) { userSent.add(message.clone()); }
+        boolean failUserSend;
+        public void sendUserData(byte[] message) throws IOException {
+            if (failUserSend) throw new IOException("injected user send failure");
+            userSent.add(message.clone());
+        }
         public void send(byte[] message, InetSocketAddress address) { }
         public Closeable listenMetatraffic(PacketHandler handler) {
             metaSubscriptions++;
