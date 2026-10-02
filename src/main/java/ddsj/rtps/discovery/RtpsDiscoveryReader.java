@@ -14,7 +14,9 @@ import ddsj.rtps.types.Locator;
 import ddsj.rtps.util.RtpsIo;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -26,63 +28,42 @@ public final class RtpsDiscoveryReader {
     private RtpsDiscoveryReader() {
     }
 
-    public static Optional<RemoteParticipant> readRemoteParticipant(byte[] packet, int length) {
-        return readDiscoveryData(packet, length, (writerId, payload, inlineQos, littleEndian) -> {
-            if (!writerId.equals(RtpsEntity.PARTICIPANT_BUILTIN_TOPIC_WRITER)) {
-                return Optional.empty();
-            }
-            return readRemoteParticipantPayload(payload, littleEndian);
-        });
-    }
-
-    public static Optional<RemotePublication> readRemotePublication(byte[] packet, int length) {
-        return readRemotePublicationChange(packet, length).flatMap(RemoteEndpointChange::endpoint);
-    }
-
-    public static Optional<RemoteSubscription> readRemoteSubscription(byte[] packet, int length) {
-        return readRemoteSubscriptionChange(packet, length).flatMap(RemoteEndpointChange::endpoint);
-    }
-
-    public static Optional<RemoteEndpointChange<RemotePublication>> readRemotePublicationChange(byte[] packet, int length) {
-        return readDiscoveryData(packet, length, (writerId, payload, inlineQos, littleEndian) -> {
-            if (!writerId.equals(RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER)) {
-                return Optional.empty();
-            }
-            return readRemoteEndpointChange(payload, inlineQos, littleEndian, RtpsDiscoveryReader::readRemotePublicationPayload);
-        });
-    }
-
-    public static Optional<RemoteEndpointChange<RemoteSubscription>> readRemoteSubscriptionChange(byte[] packet, int length) {
-        return readDiscoveryData(packet, length, (writerId, payload, inlineQos, littleEndian) -> {
-            if (!writerId.equals(RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_WRITER)) {
-                return Optional.empty();
-            }
-            return readRemoteEndpointChange(payload, inlineQos, littleEndian, RtpsDiscoveryReader::readRemoteSubscriptionPayload);
-        });
-    }
-
-    private static <T> Optional<T> readDiscoveryData(byte[] packet, int length, DiscoveryPayloadParser<T> parsePayload) {
+    /** Reads all supported discovery notifications in packet order, skipping unparseable DATA. */
+    public static List<DiscoveryChange> readDiscoveryData(byte[] packet, int length) {
+        List<DiscoveryChange> changes = new ArrayList<>();
         for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
             if (submessage.kind() != RtpsSubmessageKind.DATA) {
                 continue;
             }
-            Optional<T> result = parseDiscoveryDataSubmessage(
+            Optional<DiscoveryChange> result = parseDiscoveryDataSubmessage(
                     submessage.body(),
                     (submessage.flags() & INLINE_QOS_FLAG) != 0,
-                    submessage.littleEndian(),
-                    parsePayload);
-            if (result.isPresent()) {
-                return result;
-            }
+                    submessage.littleEndian());
+            result.ifPresent(changes::add);
+        }
+        return List.copyOf(changes);
+    }
+
+    private static Optional<DiscoveryChange> readDiscoveryPayload(
+            EntityId writerId, byte[] payload, InlineQos inlineQos, boolean littleEndian) {
+        if (writerId.equals(RtpsEntity.PARTICIPANT_BUILTIN_TOPIC_WRITER)) {
+            return readRemoteParticipantPayload(payload, littleEndian).map(DiscoveryChange.Participant::new);
+        }
+        if (writerId.equals(RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER)) {
+            return readRemoteEndpointChange(payload, inlineQos, littleEndian,
+                    RtpsDiscoveryReader::readRemotePublicationPayload).map(DiscoveryChange.Publication::new);
+        }
+        if (writerId.equals(RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_WRITER)) {
+            return readRemoteEndpointChange(payload, inlineQos, littleEndian,
+                    RtpsDiscoveryReader::readRemoteSubscriptionPayload).map(DiscoveryChange.Subscription::new);
         }
         return Optional.empty();
     }
 
-    private static <T> Optional<T> parseDiscoveryDataSubmessage(
+    private static Optional<DiscoveryChange> parseDiscoveryDataSubmessage(
             byte[] body,
             boolean hasInlineQos,
-            boolean littleEndian,
-            DiscoveryPayloadParser<T> parsePayload) {
+            boolean littleEndian) {
         if (body.length < 20) {
             return Optional.empty();
         }
@@ -105,7 +86,7 @@ public final class RtpsDiscoveryReader {
         if (payloadOffset > body.length) {
             return Optional.empty();
         }
-        return parsePayload.parse(writerId, Arrays.copyOfRange(body, payloadOffset, body.length), inlineQos, littleEndian);
+        return readDiscoveryPayload(writerId, Arrays.copyOfRange(body, payloadOffset, body.length), inlineQos, littleEndian);
     }
 
     private static Optional<RemoteParticipant> readRemoteParticipantPayload(byte[] payload, boolean littleEndian) {
@@ -242,11 +223,6 @@ public final class RtpsDiscoveryReader {
         return new Guid(
                 new GuidPrefix(Arrays.copyOfRange(bytes, 0, 12)),
                 new EntityId(Arrays.copyOfRange(bytes, 12, 16)));
-    }
-
-    @FunctionalInterface
-    private interface DiscoveryPayloadParser<T> {
-        Optional<T> parse(EntityId writerId, byte[] payload, InlineQos inlineQos, boolean littleEndian);
     }
 
     private record InlineQos(Optional<StatusInfo> statusInfo, Optional<byte[]> keyHash) {

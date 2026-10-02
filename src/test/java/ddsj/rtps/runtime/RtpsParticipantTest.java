@@ -322,17 +322,22 @@ class RtpsParticipantTest {
             var reader = participant.createReader(endpoint("one"), CODEC);
             participant.announce();
             var publications = transport.metaSent.stream()
-                    .flatMap(b -> RtpsDiscoveryReader.readRemotePublication(b, b.length).stream()).toList();
+                    .flatMap(b -> RtpsDiscoveryReader.readDiscoveryData(b, b.length).stream()
+                            .filter(DiscoveryChange.Publication.class::isInstance).map(DiscoveryChange.Publication.class::cast)
+                            .flatMap(c -> c.change().endpoint().stream())).toList();
             assertEquals(Set.of(writer1.guid(), writer2.guid()), publications.stream().map(RemotePublication::endpointGuid).collect(java.util.stream.Collectors.toSet()));
-            assertTrue(transport.metaSent.stream().anyMatch(b -> RtpsDiscoveryReader.readRemoteSubscription(b, b.length)
-                    .map(s -> s.endpointGuid().equals(reader.guid())).orElse(false)));
+            assertTrue(transport.metaSent.stream().anyMatch(b -> RtpsDiscoveryReader.readDiscoveryData(b, b.length).stream()
+                    .filter(DiscoveryChange.Subscription.class::isInstance).map(DiscoveryChange.Subscription.class::cast)
+                    .anyMatch(s -> s.change().endpointGuid().equals(reader.guid()))));
             var sequences = transport.metaSent.stream().flatMap(b -> RtpsUserDataParser.readUserSamples(b, b.length,
                     RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_READER).stream()).map(UserDataSample::sequenceNumber).toList();
             assertEquals(Set.of(1L, 2L), Set.copyOf(sequences));
             writer1.close();
             transport.metaSent.clear();
             participant.announce();
-            var changes = transport.metaSent.stream().flatMap(b -> RtpsDiscoveryReader.readRemotePublicationChange(b, b.length).stream()).toList();
+            var changes = transport.metaSent.stream().flatMap(b -> RtpsDiscoveryReader.readDiscoveryData(b, b.length).stream()
+                    .filter(DiscoveryChange.Publication.class::isInstance).map(DiscoveryChange.Publication.class::cast)
+                    .map(DiscoveryChange.Publication::change)).toList();
             assertTrue(changes.stream().anyMatch(c -> c.endpointGuid().equals(writer1.guid()) && c.disposedOrUnregistered()));
             assertFalse(changes.stream().anyMatch(c -> c.endpointGuid().equals(writer1.guid()) && c.endpoint().isPresent()));
             assertTrue(changes.stream().anyMatch(c -> c.endpointGuid().equals(writer2.guid()) && c.endpoint().isPresent()));
@@ -340,8 +345,9 @@ class RtpsParticipantTest {
             var ack = new RtpsMessageBuilder(new GuidPrefix(new byte[12]));
             ack.ackNack(RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_READER, RtpsEntity.PUBLICATIONS_BUILTIN_TOPIC_WRITER, 3, Set.of(3L), 1);
             transport.deliverMeta(ack.bytes());
-            assertTrue(transport.metaSent.stream().anyMatch(b -> RtpsDiscoveryReader.readRemotePublicationChange(b, b.length)
-                    .map(c -> c.endpointGuid().equals(writer1.guid()) && c.disposedOrUnregistered()).orElse(false)));
+            assertTrue(transport.metaSent.stream().anyMatch(b -> RtpsDiscoveryReader.readDiscoveryData(b, b.length).stream()
+                    .filter(DiscoveryChange.Publication.class::isInstance).map(DiscoveryChange.Publication.class::cast)
+                    .anyMatch(c -> c.change().endpointGuid().equals(writer1.guid()) && c.change().disposedOrUnregistered())));
         }
     }
 

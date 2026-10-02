@@ -62,30 +62,31 @@ public final class SpdpDiscoveryListener implements Closeable {
             handleSedpHeartbeat(hb, RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_READER,
                 RtpsEntity.SUBSCRIPTIONS_BUILTIN_TOPIC_WRITER, receivedSubSequences);
         }
-        RtpsDiscoveryReader.readRemoteParticipant(packet.data(), packet.length()).ifPresent(remote -> {
-            if (!remote.guidPrefix().equals(localGuidPrefix)) {
-                remoteParticipants.upsert(remote);
-            }
-        });
-        RtpsDiscoveryReader.readRemotePublicationChange(packet.data(), packet.length()).ifPresent(change -> {
-            if (!change.endpointGuid().prefix().equals(localGuidPrefix)) {
-                if (change.disposedOrUnregistered()) {
-                    remotePublications.remove(change.endpointGuid());
-                } else {
-                    change.endpoint().ifPresent(remotePublications::upsert);
+        for (DiscoveryChange notification : RtpsDiscoveryReader.readDiscoveryData(packet.data(), packet.length())) {
+            if (notification instanceof DiscoveryChange.Participant participant) {
+                RemoteParticipant remote = participant.participant();
+                if (!remote.guidPrefix().equals(localGuidPrefix)) {
+                    remoteParticipants.upsert(remote);
                 }
+            } else if (notification instanceof DiscoveryChange.Publication publication) {
+                applyEndpointChange(publication.change(), remotePublications);
+            } else if (notification instanceof DiscoveryChange.Subscription subscription) {
+                applyEndpointChange(subscription.change(), remoteSubscriptions);
             }
-        });
-        RtpsDiscoveryReader.readRemoteSubscriptionChange(packet.data(), packet.length()).ifPresent(change -> {
-            if (!change.endpointGuid().prefix().equals(localGuidPrefix)) {
-                if (change.disposedOrUnregistered()) {
-                    remoteSubscriptions.remove(change.endpointGuid());
-                } else {
-                    change.endpoint().ifPresent(remoteSubscriptions::upsert);
-                }
-            }
-        });
+        }
         purgeExpiredParticipants();
+    }
+
+    private <T extends RemoteEndpoint> void applyEndpointChange(
+            RemoteEndpointChange<T> change, RemoteEndpointStore<T> store) {
+        if (change.endpointGuid().prefix().equals(localGuidPrefix)) {
+            return;
+        }
+        if (change.disposedOrUnregistered()) {
+            store.remove(change.endpointGuid());
+        } else {
+            change.endpoint().ifPresent(store::upsert);
+        }
     }
 
     private void handleSedpHeartbeat(Heartbeat hb,

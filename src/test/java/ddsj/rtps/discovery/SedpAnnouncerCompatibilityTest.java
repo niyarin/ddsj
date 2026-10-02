@@ -54,9 +54,10 @@ class SedpAnnouncerCompatibilityTest {
         var sample = RtpsUserDataParser.readUserSamples(original, original.length, reader).get(0);
         assertEquals(1, sample.sequenceNumber());
         assertUserUnicastLocator(sample.payload(), transport.userUnicastLocator());
-        var discovered = publication
-                ? RtpsDiscoveryReader.readRemotePublication(original, original.length).orElseThrow()
-                : RtpsDiscoveryReader.readRemoteSubscription(original, original.length).orElseThrow();
+        var notification = RtpsDiscoveryReader.readDiscoveryData(original, original.length).get(0);
+        RemoteEndpoint discovered = publication
+                ? ((DiscoveryChange.Publication) notification).change().endpoint().orElseThrow()
+                : ((DiscoveryChange.Subscription) notification).change().endpoint().orElseThrow();
         assertEquals(endpointGuid, discovered.endpointGuid());
         assertEquals(endpoint.topicName(), discovered.topicName());
         assertEquals(endpoint.typeName(), discovered.typeName());
