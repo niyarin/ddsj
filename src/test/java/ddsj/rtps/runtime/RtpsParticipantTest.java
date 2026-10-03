@@ -358,13 +358,16 @@ class RtpsParticipantTest {
         try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
             var first = participant.createWriter(endpoint, CODEC);
             var second = participant.createWriter(endpoint, CODEC);
+            participant.subscriptions().upsert(new ddsj.rtps.discovery.RemoteSubscription(
+                    new GuidPrefix(new byte[12]).toGuid(RtpsEntity.USER_READER_NO_KEY),
+                    endpoint.topicName(), endpoint.typeName(), qos));
             first.write(new byte[]{1});
             second.write(new byte[]{2});
             transport.userSent.clear();
             var ack = new RtpsMessageBuilder(new GuidPrefix(new byte[12]));
             ack.ackNack(RtpsEntity.USER_READER_NO_KEY, second.guid().entityId(), 1, Set.of(1L), 1);
             transport.deliverUser(ack.bytes());
-            var samples = transport.userSent.stream().flatMap(b -> RtpsUserDataParser.readUserSamples(b, b.length, RtpsEntity.UNKNOWN).stream()).toList();
+            var samples = transport.userSent.stream().flatMap(b -> RtpsUserDataParser.readUserSamples(b, b.length, RtpsEntity.USER_READER_NO_KEY).stream()).toList();
             assertEquals(1, samples.size());
             assertEquals(second.guid(), samples.get(0).writerGuid());
             assertArrayEquals(new byte[]{2}, samples.get(0).payload());

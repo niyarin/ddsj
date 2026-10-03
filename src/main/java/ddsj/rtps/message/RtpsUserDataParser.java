@@ -100,9 +100,14 @@ public final class RtpsUserDataParser {
     }
 
     public static List<NackFrag> readNackFrags(byte[] packet, int length) {
+        return readNackFrags(packet, length, null);
+    }
+
+    public static List<NackFrag> readNackFrags(byte[] packet, int length, GuidPrefix localPrefix) {
         List<NackFrag> result = new ArrayList<>();
         for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
-            if (submessage.kind() == RtpsSubmessageKind.NACK_FRAG) {
+            if (submessage.kind() == RtpsSubmessageKind.NACK_FRAG
+                    && submessage.acceptsDestination(localPrefix)) {
                 parseNackFrag(
                         submessage.sourceGuidPrefix(),
                         submessage.body(),

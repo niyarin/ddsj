@@ -56,6 +56,14 @@ final class EndpointResolver {
         return result;
     }
 
+    Set<RemoteSubscription> matchingSubscriptions() {
+        Set<RemoteSubscription> result = new HashSet<>();
+        for (RemoteSubscription remote : subscriptions) {
+            if (matches(remote, local.qos(), remote.qos())) result.add(remote);
+        }
+        return result;
+    }
+
     private boolean matches(RemoteEndpoint remote, EndpointQos offered, EndpointQos requested) {
         boolean topicMatch = remote.topicName().equals(local.topicName());
         boolean typeMatch = remote.typeName().equals(local.typeName());

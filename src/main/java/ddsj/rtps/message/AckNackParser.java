@@ -2,6 +2,7 @@ package ddsj.rtps.message;
 
 import ddsj.rtps.protocol.RtpsSubmessageKind;
 import ddsj.rtps.types.EntityId;
+import ddsj.rtps.types.GuidPrefix;
 import ddsj.rtps.util.RtpsIo;
 
 import java.util.ArrayList;
@@ -16,10 +17,17 @@ public final class AckNackParser {
     }
 
     public static List<AckNack> readAckNacks(byte[] packet, int length) {
+        return readAckNacks(packet, length, null);
+    }
+
+    public static List<AckNack> readAckNacks(byte[] packet, int length, GuidPrefix localPrefix) {
         List<AckNack> result = new ArrayList<>();
         for (RtpsSubmessage submessage : new RtpsMessageParser(packet, length).submessages()) {
-            if (submessage.kind() == RtpsSubmessageKind.ACKNACK) {
-                parseAckNack(submessage.body(), submessage.littleEndian()).ifPresent(result::add);
+            if (submessage.kind() == RtpsSubmessageKind.ACKNACK && submessage.acceptsDestination(localPrefix)) {
+                parseAckNack(submessage.body(), submessage.littleEndian())
+                        .map(ack -> new AckNack(ack.readerId(), ack.writerId(), ack.requestedSequenceNumbers(),
+                                ack.count(), submessage.sourceGuidPrefix()))
+                        .ifPresent(result::add);
             }
         }
         return result;

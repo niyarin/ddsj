@@ -3,6 +3,7 @@ package ddsj.rtps.runtime;
 import ddsj.rtps.util.Closeables;
 import ddsj.rtps.qos.EndpointQos.LivelinessKind;
 import ddsj.rtps.qos.EndpointQos.ReliabilityKind;
+import ddsj.rtps.qos.EndpointQos.DurabilityKind;
 import ddsj.rtps.discovery.LocalEndpoint;
 import ddsj.rtps.discovery.RemoteParticipant;
 import ddsj.rtps.history.WriterHistoryCache;
@@ -26,6 +27,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,6 +53,35 @@ public final class RtpsDataWriter<T> implements Closeable {
     private final NackFragListener nackFragListener;
     private final FragmentSender fragmentSender;
     private final LivelinessAsserter livelinessAsserter;
+    private final Map<Guid, ReaderMatch> readerMatches = new HashMap<>();
+
+    private static final class ReaderMatch {
+        final long firstSequence;
+        final long historicalLastSequence;
+        boolean replayPending;
+
+        ReaderMatch(long firstSequence, long historicalLastSequence, boolean replayPending) {
+            this.firstSequence = firstSequence;
+            this.historicalLastSequence = historicalLastSequence;
+            this.replayPending = replayPending;
+        }
+    }
+
+    /** Observe matches before allocating a sequence number, so live samples remain repairable. */
+    private void refreshReaderMatches() {
+        Set<Guid> current = new HashSet<>();
+        for (var subscription : endpointResolver.matchingSubscriptions()) {
+            Guid reader = subscription.endpointGuid();
+            current.add(reader);
+            readerMatches.computeIfAbsent(reader, ignored -> {
+                boolean replay = endpoint.qos().durability() == DurabilityKind.TRANSIENT_LOCAL
+                        && subscription.qos().durability() == DurabilityKind.TRANSIENT_LOCAL;
+                return new ReaderMatch(replay ? history.firstSequenceNumber().orElse(userSequence.get())
+                        : userSequence.get(), userSequence.get() - 1, replay);
+            });
+        }
+        readerMatches.keySet().retainAll(current);
+    }
 
     public RtpsDataWriter(RtpsParticipantConfig config, LocalEndpoint endpoint, PayloadSerializer<T> serializer) throws IOException {
         this(RtpsParticipant.owned(config, endpoint, serializer), endpoint, serializer, true);
@@ -80,11 +113,13 @@ public final class RtpsDataWriter<T> implements Closeable {
             this.history = new WriterHistoryCache(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
             this.ackNackListener = new AckNackListener(
                     transport,
+                    guidPrefix,
                     Set.of(entityId),
                     this::handleAckNack);
             opened.add(ackNackListener);
             this.nackFragListener = new NackFragListener(
                     transport,
+                    guidPrefix,
                     Set.of(entityId),
                     this::handleNackFrag);
             opened.add(nackFragListener);
@@ -134,6 +169,8 @@ public final class RtpsDataWriter<T> implements Closeable {
         if (!running.get()) {
             throw new IOException("writer is closed");
         }
+        refreshReaderMatches();
+        replayPendingHistory();
         byte[] payload = serializer.serialize(value);
         long sequenceNumber = userSequence.get();
         if (!history.tryPut(sequenceNumber, payload, relatedSampleIdentity)) {
@@ -161,12 +198,30 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     synchronized void announceHeartbeat() throws IOException {
-        if (running.get() && endpoint.qos().reliability() == ReliabilityKind.RELIABLE) sendUserHeartbeat();
+        if (!running.get()) return;
+        refreshReaderMatches();
+        replayPendingHistory();
+        if (endpoint.qos().reliability() == ReliabilityKind.RELIABLE) sendUserHeartbeat();
+    }
+
+    private void replayPendingHistory() throws IOException {
+        for (var entry : readerMatches.entrySet()) {
+            ReaderMatch match = entry.getValue();
+            if (match.replayPending) {
+                long first = Math.max(match.firstSequence, history.firstSequenceNumber().orElse(userSequence.get()));
+                for (long sequence = first; sequence <= match.historicalLastSequence; sequence++) {
+                    var payload = history.get(sequence);
+                    if (payload.isPresent()) sendDirectedData(entry.getKey(), sequence, payload.get());
+                }
+                match.replayPending = false;
+            }
+        }
     }
 
     private synchronized void handleAckNack(AckNack ackNack) {
         if (!running.get()) return;
         try {
+            refreshReaderMatches();
             if (ackNack.writerId().equals(entityId)) {
                 resendRequestedSamples(ackNack);
             }
@@ -181,7 +236,17 @@ public final class RtpsDataWriter<T> implements Closeable {
             return;
         }
         try {
+            refreshReaderMatches();
+            // NACK_FRAG carries the requester's prefix in the parsed message context.
+            Guid reader = nackFrag.writerGuid().prefix().toGuid(nackFrag.readerId());
+            ReaderMatch match = readerMatches.get(reader);
+            if (match == null) return;
+            if (nackFrag.writerSequenceNumber() < match.firstSequence) {
+                sendGap(reader, nackFrag.writerSequenceNumber());
+                return;
+            }
             var relatedIdentity = history.relatedSampleIdentity(nackFrag.writerSequenceNumber()).orElse(null);
+            if (relatedIdentity != null && !relatedIdentity.writerGuid().prefix().equals(reader.prefix())) return;
             boolean resent = fragmentSender.resendFragments(
                     guidPrefix,
                     nackFrag.readerId(),
@@ -189,10 +254,9 @@ public final class RtpsDataWriter<T> implements Closeable {
                     nackFrag.writerSequenceNumber(),
                     nackFrag.requestedFragmentNumbers(),
                     relatedIdentity,
-                    message -> sendToUserLocators(message, relatedIdentity == null
-                            ? null : relatedIdentity.writerGuid().prefix()));
+                    message -> sendDirected(message, reader));
             if (!resent && history.get(nackFrag.writerSequenceNumber()).isEmpty()) {
-                sendGap(nackFrag.readerId(), nackFrag.writerSequenceNumber());
+                sendGap(reader, nackFrag.writerSequenceNumber());
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -203,13 +267,48 @@ public final class RtpsDataWriter<T> implements Closeable {
         if (endpoint.qos().reliability() != ReliabilityKind.RELIABLE) {
             return;
         }
+        if (ackNack.sourceGuidPrefix() == null) return;
+        Guid reader = ackNack.sourceGuidPrefix().toGuid(ackNack.readerId());
+        ReaderMatch match = readerMatches.get(reader);
+        if (match == null) return;
         for (long sequenceNumber : ackNack.requestedSequenceNumbers()) {
             var payload = history.get(sequenceNumber);
-            if (payload.isPresent()) {
-                sendUserData(sequenceNumber, payload.get(), history.relatedSampleIdentity(sequenceNumber).orElse(null));
+            if (sequenceNumber >= match.firstSequence && payload.isPresent()) {
+                sendDirectedData(reader, sequenceNumber, payload.get());
             } else {
-                sendGap(ackNack.readerId(), sequenceNumber);
+                sendGap(reader, sequenceNumber);
             }
+        }
+    }
+
+    private void sendDirectedData(Guid reader, long sequence, byte[] payload) throws IOException {
+        var related = history.relatedSampleIdentity(sequence).orElse(null);
+        if (related != null && !related.writerGuid().prefix().equals(reader.prefix())) return;
+        if (fragmentSender.requiresFragmentation(payload)) {
+            fragmentSender.sendFragmented(guidPrefix, reader.entityId(), entityId, sequence, payload,
+                    related, message -> sendDirected(message, reader));
+        } else {
+            RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
+            message.infoTs(RtpsTimestamp.now());
+            if (related == null) message.data(reader.entityId(), entityId, sequence, payload);
+            else message.dataWithRelatedSampleIdentity(reader.entityId(), entityId, sequence,
+                    related.writerGuid(), related.sequenceNumber(), payload);
+            sendDirected(message.bytes(), reader);
+        }
+    }
+
+    /** INFO_DST prevents multicast repairs from reaching readers in other participants. */
+    private void sendDirected(byte[] message, Guid reader) throws IOException {
+        RtpsMessageBuilder header = new RtpsMessageBuilder(guidPrefix);
+        header.infoDst(reader.prefix());
+        byte[] prefix = header.bytes();
+        byte[] directed = new byte[prefix.length + message.length - 20];
+        System.arraycopy(prefix, 0, directed, 0, prefix.length);
+        System.arraycopy(message, 20, directed, prefix.length, message.length - 20);
+        transport.sendUserData(directed);
+        var remote = participant.remoteParticipants().get(reader.prefix());
+        if (remote.isPresent()) {
+            for (var locator : remote.get().userUnicast()) transport.send(directed, locator);
         }
     }
 
@@ -253,19 +352,14 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     private void sendUserHeartbeat() throws IOException {
-        var firstSequenceNumber = history.firstSequenceNumber();
-        var lastSequenceNumber = history.lastSequenceNumber();
-        if (firstSequenceNumber.isEmpty() || lastSequenceNumber.isEmpty()) {
-            return;
+        refreshReaderMatches();
+        for (var entry : readerMatches.entrySet()) {
+            RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
+            message.heartbeat(entry.getKey().entityId(), entityId,
+                    Math.max(entry.getValue().firstSequence, history.firstSequenceNumber().orElse(userSequence.get())),
+                    userSequence.get() - 1, (int) userHeartbeatCount.getAndIncrement());
+            sendDirected(message.bytes(), entry.getKey());
         }
-        RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
-        message.heartbeat(
-                RtpsEntity.UNKNOWN,
-                entityId,
-                firstSequenceNumber.get(),
-                lastSequenceNumber.get(),
-                (int) userHeartbeatCount.getAndIncrement());
-        sendToUserLocators(message.bytes());
     }
 
     private synchronized void sendLivelinessHeartbeat() {
@@ -277,10 +371,10 @@ public final class RtpsDataWriter<T> implements Closeable {
         }
     }
 
-    private void sendGap(EntityId readerId, long sequenceNumber) throws IOException {
+    private void sendGap(Guid reader, long sequenceNumber) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
-        message.gap(readerId, entityId, sequenceNumber);
-        sendToUserLocators(message.bytes());
+        message.gap(reader.entityId(), entityId, sequenceNumber);
+        sendDirected(message.bytes(), reader);
     }
 
     private void sendToUserLocators(byte[] message) throws IOException {
@@ -329,6 +423,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             Closeables.closeAll(resources);
         } finally {
             history.clear();
+            readerMatches.clear();
         }
     }
 }

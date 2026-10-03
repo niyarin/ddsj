@@ -171,10 +171,37 @@ class RtpsIntegrationTest {
                 Thread.sleep(3000);
 
                 String received = reader.poll(Duration.ofSeconds(3)).orElse(null);
-                // Note: actual late-join behavior depends on implementation
-                // This test verifies the QoS is properly exchanged
-                assertNotNull(writer);
-                assertNotNull(reader);
+                assertEquals("Historical Data", received);
+            }
+        }
+    }
+
+    @Test
+    void volatileLateJoinerReceivesOnlyLiveData() throws Exception {
+        var qos = EndpointQos.builder().reliability(ReliabilityKind.RELIABLE).build();
+        var endpoint = new LocalEndpoint("VolatileLateTopic", "String", qos);
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 60);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 61);
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER)) {
+            writer.write("Historical Data");
+            try (var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER)) {
+                assertTrue(reader.poll(Duration.ofSeconds(3)).isEmpty());
+                writer.write("Live Data");
+                assertEquals("Live Data", reader.poll(Duration.ofSeconds(3)).orElse(null));
+            }
+        }
+    }
+
+    @Test
+    void bestEffortTransientLocalLateJoinerReceivesHistory() throws Exception {
+        var qos = EndpointQos.builder().durability(DurabilityKind.TRANSIENT_LOCAL).build();
+        var endpoint = new LocalEndpoint("BestEffortDurableTopic", "String", qos);
+        var writerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 62);
+        var readerConfig = new RtpsParticipantConfig(0, defaultMulticast(), Optional.empty(), 63);
+        try (var writer = new RtpsDataWriter<>(writerConfig, endpoint, STRING_SERIALIZER)) {
+            writer.write("Historical Data");
+            try (var reader = new RtpsDataReader<>(readerConfig, endpoint, STRING_SERIALIZER)) {
+                assertEquals("Historical Data", reader.poll(Duration.ofSeconds(5)).orElse(null));
             }
         }
     }

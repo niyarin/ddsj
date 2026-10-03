@@ -2,6 +2,7 @@ package ddsj.rtps.runtime;
 
 import ddsj.rtps.qos.EndpointQos;
 import ddsj.rtps.discovery.LocalEndpoint;
+import ddsj.rtps.discovery.RemoteSubscription;
 import ddsj.rtps.history.ResourceLimits;
 import ddsj.rtps.message.RtpsMessageBuilder;
 import ddsj.rtps.message.RtpsMessageParser;
@@ -60,7 +61,11 @@ class HistoryRuntimeTest {
     }
     @Test void writerKeepAllRejectsWithoutSendingOrLosingOldPayload() throws Exception {
         var transport = new FakeTransport();
-        try (var writer = new RtpsDataWriter<>(new RtpsParticipantConfig(0), endpoint(KEEP_ALL, 1, 2), CODEC, transport)) {
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var local = endpoint(KEEP_ALL, 1, 2);
+            var writer = participant.createWriter(local, CODEC);
+            participant.subscriptions().upsert(new RemoteSubscription(PREFIX.toGuid(RtpsEntity.USER_READER_NO_KEY),
+                    local.topicName(), local.typeName(), local.qos()));
             writer.write(new byte[]{1}); writer.write(new byte[]{2});
             assertThrows(IOException.class, () -> writer.write(new byte[]{3}));
             var data = transport.sent.stream().flatMap(bytes -> RtpsUserDataParser.readUserSamples(bytes, bytes.length, RtpsEntity.USER_READER_NO_KEY).stream()).toList();
@@ -75,7 +80,11 @@ class HistoryRuntimeTest {
     }
     @Test void evictedFragmentCannotBeResentAndProducesGap() throws Exception {
         var transport = new FakeTransport();
-        try (var writer = new RtpsDataWriter<>(new RtpsParticipantConfig(0), endpoint(KEEP_LAST, 1, 2), CODEC, transport)) {
+        try (var participant = new RtpsParticipant(new RtpsParticipantConfig(0), transport)) {
+            var local = endpoint(KEEP_LAST, 1, 2);
+            var writer = participant.createWriter(local, CODEC);
+            participant.subscriptions().upsert(new RemoteSubscription(PREFIX.toGuid(RtpsEntity.USER_READER_NO_KEY),
+                    local.topicName(), local.typeName(), local.qos()));
             writer.write(new byte[65000]);
             writer.write(new byte[]{2});
             transport.sent.clear();

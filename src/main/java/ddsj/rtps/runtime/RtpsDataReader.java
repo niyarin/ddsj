@@ -134,7 +134,8 @@ public final class RtpsDataReader<T> implements Closeable {
             this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
             this.serializer = serializer;
             this.transport = participant.transport();
-            this.userDataReader = new RtpsUserDataReader(transport, entityId, this::onSample, this::onHeartbeat);
+            this.userDataReader = new RtpsUserDataReader(transport, guidPrefix, entityId,
+                    this::onSample, this::onHeartbeat, ignored -> { });
             opened.add(userDataReader);
 
             // Initialize deadline monitor if deadline is finite
@@ -403,6 +404,7 @@ public final class RtpsDataReader<T> implements Closeable {
 
     private void sendAckNack(Guid writerGuid, long baseSequenceNumber, Set<Long> missingSequenceNumbers) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
+        message.infoDst(writerGuid.prefix());
         message.ackNack(
                 entityId,
                 writerGuid.entityId(),

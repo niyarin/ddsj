@@ -3,6 +3,7 @@ package ddsj.rtps.message;
 import ddsj.rtps.transport.RtpsPacket;
 import ddsj.rtps.transport.RtpsTransport;
 import ddsj.rtps.types.EntityId;
+import ddsj.rtps.types.GuidPrefix;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -26,8 +27,14 @@ public final class RtpsUserDataReader implements Closeable {
             Consumer<UserDataSample> onSample,
             Consumer<Heartbeat> onHeartbeat,
             Consumer<HeartbeatFrag> onHeartbeatFrag) throws IOException {
+        this(transport, null, localReaderId, onSample, onHeartbeat, onHeartbeatFrag);
+    }
+
+    public RtpsUserDataReader(RtpsTransport transport, GuidPrefix localPrefix, EntityId localReaderId,
+            Consumer<UserDataSample> onSample, Consumer<Heartbeat> onHeartbeat,
+            Consumer<HeartbeatFrag> onHeartbeatFrag) throws IOException {
         this.listener = transport.listenUserData(packet ->
-                handlePacket(packet, localReaderId, onSample, onHeartbeat, onHeartbeatFrag));
+                handlePacket(packet, localPrefix, localReaderId, onSample, onHeartbeat, onHeartbeatFrag));
     }
 
     public RtpsUserDataReader(RtpsTransport transport, EntityId localReaderId, Consumer<UserDataSample> onSample) throws IOException {
@@ -36,12 +43,15 @@ public final class RtpsUserDataReader implements Closeable {
 
     private void handlePacket(
             RtpsPacket packet,
+            GuidPrefix localPrefix,
             EntityId localReaderId,
             Consumer<UserDataSample> onSample,
             Consumer<Heartbeat> onHeartbeat,
             Consumer<HeartbeatFrag> onHeartbeatFrag) {
         // Share packet framing and context while preserving delivery order by message kind.
-        var submessages = new RtpsMessageParser(packet.data(), packet.length()).submessages();
+        var submessages = new RtpsMessageParser(packet.data(), packet.length()).submessages().stream()
+                .filter(s -> s.acceptsDestination(localPrefix))
+                .toList();
         // Handle complete DATA samples
         RtpsUserDataParser.readUserSamples(submessages, localReaderId).forEach(onSample);
 
