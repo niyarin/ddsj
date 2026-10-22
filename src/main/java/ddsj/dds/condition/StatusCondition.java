@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class StatusCondition implements Condition {
     private final Object entity;
     private final AtomicReference<StatusMask> enabledStatuses;
-    private volatile StatusMask triggeredStatuses = StatusMask.NONE;
+    private final AtomicReference<StatusMask> triggeredStatuses = new AtomicReference<>(StatusMask.NONE);
 
     /**
      * Creates a StatusCondition for the specified entity.
@@ -60,7 +60,7 @@ public final class StatusCondition implements Condition {
     @Override
     public boolean getTriggerValue() {
         StatusMask enabled = enabledStatuses.get();
-        StatusMask triggered = triggeredStatuses;
+        StatusMask triggered = triggeredStatuses.get();
         return !enabled.and(triggered).isEmpty();
     }
 
@@ -70,8 +70,8 @@ public final class StatusCondition implements Condition {
      * @param kind the status that changed
      */
     public void notifyStatusChange(StatusKind kind) {
-        StatusMask current = triggeredStatuses;
-        triggeredStatuses = current.or(StatusMask.of(kind));
+        StatusMask added = StatusMask.of(kind);
+        triggeredStatuses.updateAndGet(current -> current.or(added));
     }
 
     /**
@@ -80,17 +80,17 @@ public final class StatusCondition implements Condition {
      * @param kind the status kind to clear
      */
     public void clearStatus(StatusKind kind) {
-        // For simplicity, we rebuild the mask without the specified kind
-        StatusMask current = triggeredStatuses;
-        java.util.Set<StatusKind> kinds = new java.util.HashSet<>(current.kinds());
-        kinds.remove(kind);
-        triggeredStatuses = kinds.isEmpty() ? StatusMask.NONE : StatusMask.of(kinds);
+        triggeredStatuses.updateAndGet(current -> {
+            java.util.Set<StatusKind> kinds = new java.util.HashSet<>(current.kinds());
+            kinds.remove(kind);
+            return kinds.isEmpty() ? StatusMask.NONE : StatusMask.of(kinds);
+        });
     }
 
     /**
      * Clears all triggered statuses.
      */
     public void clearAllStatuses() {
-        triggeredStatuses = StatusMask.NONE;
+        triggeredStatuses.set(StatusMask.NONE);
     }
 }
