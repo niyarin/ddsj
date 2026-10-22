@@ -12,6 +12,8 @@ import java.lang.reflect.RecordComponent;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.lang.reflect.Array;
+import ddsj.rtps.types.SerializedKey;
 
 /** Derives FINAL struct codecs from records; all wire encoding is delegated to ddsj.cdr. */
 public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport<T> {
@@ -31,12 +33,15 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
     private final CdrCodec<T> codec;
     private final CdrPayloadSerializer<T> serializer;
     private final CdrPayloadSerializer<T> cdr2Serializer;
+    private final CdrPayloadSerializer<T> keySerializer;
 
     private CdrRecordTypeSupport(Class<T> type) {
         this.type = type;
         this.codec = new RecordCodec<>(type, new HashSet<>());
         this.serializer = new CdrPayloadSerializer<>(codec);
         this.cdr2Serializer = new CdrPayloadSerializer<>(codec, CdrEncoding.XCDR2);
+        boolean keyed = java.util.Arrays.stream(type.getRecordComponents()).anyMatch(c -> c.isAnnotationPresent(CdrKey.class));
+        this.keySerializer = keyed ? new CdrPayloadSerializer<>(new RecordCodec<>(type, new HashSet<>(), true)) : null;
     }
 
     /** Body codec, also usable inside a hand-written enclosing codec. */
@@ -46,6 +51,19 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
     @Override public Class<T> getType() { return type; }
     @Override public byte[] serialize(T value) { return serializer.serialize(value); }
     @Override public T deserialize(byte[] data) { return serializer.deserialize(data); }
+    @Override public boolean hasKey() { return keySerializer != null; }
+    @Override public boolean supportsKeySerialization() { return hasKey(); }
+    @Override public byte[] serializeKey(T value) {
+        if (!hasKey()) throw new IllegalStateException("unkeyed type");
+        return keySerializer.serialize(value);
+    }
+    @Override public T deserializeKey(byte[] data) {
+        if (!hasKey()) throw new IllegalStateException("unkeyed type");
+        return keySerializer.deserialize(data);
+    }
+    @Override public Object extractKey(T value) {
+        return hasKey() ? new SerializedKey(serializeKey(value)) : null;
+    }
 
     /** Serializes using plain XCDR2 little-endian encoding. */
     public byte[] serializeCdr2(T value) { return cdr2Serializer.serialize(value); }
@@ -88,13 +106,23 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
         private final Method[] accessors;
         private final CdrCodec<Object>[] members;
         private final int minimumSize;
+        private final boolean[] included;
+        private final Class<?>[] types;
+        private final CdrFixedLength[] fixedLengths;
 
         @SuppressWarnings("unchecked")
         RecordCodec(Class<T> type, Set<Class<?>> visiting) {
+            this(type, visiting, false);
+        }
+
+        @SuppressWarnings("unchecked")
+        RecordCodec(Class<T> type, Set<Class<?>> visiting, boolean keyOnly) {
             if (!visiting.add(type)) throw new IllegalArgumentException("Recursive CDR record type: " + type.getName());
             try {
                 RecordComponent[] components = type.getRecordComponents();
-                Class<?>[] types = new Class<?>[components.length];
+                types = new Class<?>[components.length];
+                included = new boolean[components.length];
+                fixedLengths = new CdrFixedLength[components.length];
                 accessors = new Method[components.length];
                 members = (CdrCodec<Object>[]) new CdrCodec<?>[components.length];
                 long size = 0;
@@ -104,6 +132,8 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
                     accessors[i] = component.getAccessor();
                     accessors[i].setAccessible(true);
                     CdrFixedLength fixed = component.getAnnotation(CdrFixedLength.class);
+                    fixedLengths[i] = fixed;
+                    included[i] = !keyOnly || component.isAnnotationPresent(CdrKey.class);
                     if (fixed != null && (!types[i].isArray() || fixed.value() <= 0)) {
                         throw new IllegalArgumentException("@CdrFixedLength requires an array and a positive length: " + component);
                     }
@@ -116,7 +146,7 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
                         member = componentCodec(types[i], visiting);
                     }
                     members[i] = (CdrCodec<Object>) member;
-                    size = Math.min(Integer.MAX_VALUE, size + member.minimumSize());
+                    if (included[i]) size = Math.min(Integer.MAX_VALUE, size + member.minimumSize());
                 }
                 minimumSize = (int) size;
                 constructor = type.getDeclaredConstructor(types);
@@ -133,7 +163,9 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
         @Override public void write(CdrWriter out, T value) {
             Objects.requireNonNull(value, "record");
             try {
-                for (int i = 0; i < members.length; i++) members[i].write(out, accessors[i].invoke(value));
+                for (int i = 0; i < members.length; i++) {
+                    if (included[i]) members[i].write(out, accessors[i].invoke(value));
+                }
             } catch (ReflectiveOperationException e) {
                 throw new IllegalArgumentException("Cannot read record components", e);
             }
@@ -141,12 +173,37 @@ public final class CdrRecordTypeSupport<T extends Record> implements TypeSupport
 
         @Override public T read(CdrReader in) {
             Object[] values = new Object[members.length];
-            for (int i = 0; i < members.length; i++) values[i] = members[i].read(in);
+            for (int i = 0; i < members.length; i++) {
+                values[i] = included[i] ? members[i].read(in) : defaultValue(types[i], fixedLengths[i]);
+            }
             try {
                 return constructor.newInstance(values);
             } catch (ReflectiveOperationException e) {
                 throw new IllegalArgumentException("Cannot construct record", e);
             }
         }
+    }
+
+    private static Object defaultValue(Class<?> type, CdrFixedLength fixed) {
+        if (type == String.class) return "";
+        if (type.isArray()) return Array.newInstance(type.getComponentType(), fixed == null ? 0 : fixed.value());
+        if (type.isPrimitive()) return Array.get(Array.newInstance(type, 1), 0);
+        if (type.isRecord()) {
+            try {
+                var components = type.getRecordComponents();
+                Class<?>[] types = new Class<?>[components.length];
+                Object[] values = new Object[components.length];
+                for (int i = 0; i < components.length; i++) {
+                    types[i] = components[i].getType();
+                    values[i] = defaultValue(types[i], components[i].getAnnotation(CdrFixedLength.class));
+                }
+                var constructor = type.getDeclaredConstructor(types);
+                constructor.setAccessible(true);
+                return constructor.newInstance(values);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalArgumentException("Cannot construct key holder", e);
+            }
+        }
+        throw new IllegalArgumentException("Unsupported key holder component: " + type);
     }
 }

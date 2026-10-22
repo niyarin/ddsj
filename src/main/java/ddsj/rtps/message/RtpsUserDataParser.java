@@ -47,6 +47,34 @@ public final class RtpsUserDataParser {
         return readHeartbeats(new RtpsMessageParser(packet, length).submessages(), expectedReaderId);
     }
 
+    public static List<Gap> readGaps(byte[] packet, int length, EntityId expectedReaderId) {
+        return readGaps(new RtpsMessageParser(packet, length).submessages(), expectedReaderId);
+    }
+
+    static List<Gap> readGaps(List<RtpsSubmessage> submessages, EntityId expectedReaderId) {
+        List<Gap> result = new ArrayList<>();
+        for (var submessage : submessages) {
+            if (submessage.kind() != RtpsSubmessageKind.GAP) continue;
+            byte[] body = submessage.body();
+            boolean le = submessage.littleEndian();
+            if (body.length < 28) continue;
+            EntityId reader = new EntityId(Arrays.copyOfRange(body, 0, 4));
+            if (!reader.equals(expectedReaderId) && !isUnknownEntity(reader)) continue;
+            long start = RtpsIo.readSequenceNumber(body, 8, le);
+            long base = RtpsIo.readSequenceNumber(body, 16, le);
+            int bits = RtpsIo.readInt(body, 24, le);
+            if (start <= 0 || base < start || bits < 0 || bits > 256 || 28 + ((bits + 31) / 32) * 4 > body.length) continue;
+            Set<Long> sequences = new LinkedHashSet<>();
+            for (int bit = 0; bit < bits; bit++) {
+                int word = RtpsIo.readInt(body, 28 + (bit / 32) * 4, le);
+                if ((word & (1 << (31 - bit % 32))) != 0 && base <= Long.MAX_VALUE - bit) sequences.add(base + bit);
+            }
+            result.add(new Gap(new Guid(submessage.sourceGuidPrefix(), new EntityId(Arrays.copyOfRange(body, 4, 8))),
+                    start, base, sequences));
+        }
+        return result;
+    }
+
     static List<Heartbeat> readHeartbeats(List<RtpsSubmessage> submessages, EntityId expectedReaderId) {
         List<Heartbeat> result = new ArrayList<>();
         for (RtpsSubmessage submessage : submessages) {
@@ -144,6 +172,7 @@ public final class RtpsUserDataParser {
 
         // Parse Inline QoS if present (Q flag in submessage header)
         Optional<SampleIdentity> relatedSampleIdentity = Optional.empty();
+        int statusInfo = 0;
         if ((submessageFlags & DATA_FLAG_INLINE_QOS) != 0) {
             var inlineResult = parseInlineQos(body, payloadOffset, body.length, littleEndian);
             if (inlineResult.isEmpty()) {
@@ -151,6 +180,7 @@ public final class RtpsUserDataParser {
             }
             payloadOffset = inlineResult.get().payloadOffset();
             relatedSampleIdentity = inlineResult.get().relatedSampleIdentity();
+            statusInfo = inlineResult.get().statusInfo();
         }
         if (payloadOffset >= body.length) {
             return Optional.empty();
@@ -160,7 +190,7 @@ public final class RtpsUserDataParser {
                 sequenceNumber,
                 Arrays.copyOfRange(body, payloadOffset, body.length),
                 timestamp,
-                relatedSampleIdentity));
+                relatedSampleIdentity, statusInfo, (submessageFlags & 0x08) != 0));
     }
 
     private static Optional<DataFragment> parseDataFragmentSubmessage(
@@ -193,11 +223,13 @@ public final class RtpsUserDataParser {
             return Optional.empty();
         }
         Optional<SampleIdentity> relatedIdentity = Optional.empty();
+        int statusInfo = 0;
         if ((submessageFlags & DATA_FLAG_INLINE_QOS) != 0) {
             var inline = parseInlineQos(body, fragmentDataOffset, body.length, littleEndian);
             if (inline.isEmpty()) return Optional.empty();
             fragmentDataOffset = inline.get().payloadOffset();
             relatedIdentity = inline.get().relatedSampleIdentity();
+            statusInfo = inline.get().statusInfo();
         }
         byte[] fragmentData = Arrays.copyOfRange(body, fragmentDataOffset, body.length);
 
@@ -209,7 +241,7 @@ public final class RtpsUserDataParser {
                 fragmentSize,
                 sampleSize,
                 fragmentData,
-                timestamp, relatedIdentity));
+                timestamp, relatedIdentity, statusInfo, (submessageFlags & 0x04) != 0));
     }
 
     private static Optional<Heartbeat> parseHeartbeat(
@@ -296,19 +328,22 @@ public final class RtpsUserDataParser {
                 count));
     }
 
-    private record InlineQosResult(int payloadOffset, Optional<SampleIdentity> relatedSampleIdentity) {}
+    private record InlineQosResult(int payloadOffset, Optional<SampleIdentity> relatedSampleIdentity, int statusInfo) {}
 
     private static Optional<InlineQosResult> parseInlineQos(byte[] packet, int offset, int end, boolean littleEndian) {
         int position = offset;
         Optional<SampleIdentity> relatedSampleIdentity = Optional.empty();
+        int statusInfo = 0;
 
         while (position + 4 <= end) {
             int id = RtpsIo.readUShort(packet, position, littleEndian);
             int size = RtpsIo.readUShort(packet, position + 2, littleEndian);
             position += 4;
             if (id == ParameterId.SENTINEL) {
-                return Optional.of(new InlineQosResult(position, relatedSampleIdentity));
+                return Optional.of(new InlineQosResult(position, relatedSampleIdentity, statusInfo));
             }
+            if (position + size > end) return Optional.empty();
+            if (id == ParameterId.STATUS_INFO && size == 4) statusInfo = packet[position + 3] & 0xff;
             // Parse PID_RELATED_SAMPLE_IDENTITY (0x0083) or PID_CUSTOM_RELATED_SAMPLE_IDENTITY (0x800f)
             if ((id == ParameterId.RELATED_SAMPLE_IDENTITY || id == ParameterId.CUSTOM_RELATED_SAMPLE_IDENTITY)
                     && size == 24 && position + 24 <= end && relatedSampleIdentity.isEmpty()) {

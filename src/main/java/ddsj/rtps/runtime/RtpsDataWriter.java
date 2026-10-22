@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -54,6 +55,7 @@ public final class RtpsDataWriter<T> implements Closeable {
     private final FragmentSender fragmentSender;
     private final LivelinessAsserter livelinessAsserter;
     private final Map<Guid, ReaderMatch> readerMatches = new HashMap<>();
+    private final Map<Object, byte[]> registeredInstances = new HashMap<>();
 
     private static final class ReaderMatch {
         final long firstSequence;
@@ -103,10 +105,10 @@ public final class RtpsDataWriter<T> implements Closeable {
         List<Closeable> opened = new ArrayList<>();
         if (ownsParticipant) opened.add(participant);
         try {
-            this.entityId = participant.allocateEntityId(true);
+            this.entityId = participant.allocateEntityId(true, serializer.hasKey());
             this.guidPrefix = participant.guidPrefix();
             this.endpointResolver = new EndpointResolver(endpoint, participant.remoteParticipants(),
-                    participant.publications(), participant.subscriptions());
+                    participant.publications(), participant.subscriptions(), serializer.hasKey());
             this.endpoint = endpoint;
             this.serializer = serializer;
             this.transport = participant.transport();
@@ -123,7 +125,8 @@ public final class RtpsDataWriter<T> implements Closeable {
                     Set.of(entityId),
                     this::handleNackFrag);
             opened.add(nackFragListener);
-            this.fragmentSender = new FragmentSender(FragmentSender.DEFAULT_FRAGMENT_SIZE, FragmentSender.DEFAULT_FRAGMENTATION_THRESHOLD, history::get);
+            this.fragmentSender = new FragmentSender(FragmentSender.DEFAULT_FRAGMENT_SIZE,
+                    FragmentSender.DEFAULT_FRAGMENTATION_THRESHOLD, history::get, history::statusInfo, history::keyOnly);
             this.livelinessAsserter = new LivelinessAsserter(
                     endpoint.qos().liveliness(),
                     endpoint.qos().leaseDuration(),
@@ -166,17 +169,42 @@ public final class RtpsDataWriter<T> implements Closeable {
     }
 
     private SampleIdentity writeInternal(T value, SampleIdentity relatedSampleIdentity) throws IOException {
+        return writeInternal(value, relatedSampleIdentity, 0);
+    }
+
+    /** Sends a dispose notification while retaining the instance's writer registration. */
+    public synchronized void dispose(T keyHolder) throws IOException {
+        if (!serializer.hasKey()) throw new IllegalStateException("dispose requires a keyed type");
+        writeInternal(keyHolder, null, 1);
+    }
+
+    /** Sends an unregister notification; readers track whether other writers remain. */
+    public synchronized void unregisterInstance(T keyHolder) throws IOException {
+        if (!serializer.hasKey()) throw new IllegalStateException("unregister requires a keyed type");
+        writeInternal(keyHolder, null, 2);
+    }
+
+    private SampleIdentity writeInternal(T value, SampleIdentity relatedSampleIdentity, int statusInfo) throws IOException {
         if (!running.get()) {
             throw new IOException("writer is closed");
         }
         refreshReaderMatches();
         replayPendingHistory();
-        byte[] payload = serializer.serialize(value);
+        boolean keyOnly = statusInfo != 0 && serializer.supportsKeySerialization();
+        Object key = serializer.hasKey() ? Objects.requireNonNull(serializer.extractKey(value), "instance key") : null;
+        byte[] payload = keyOnly ? serializer.serializeKey(value) : serializer.serialize(value);
+        // Snapshot keys before callers can mutate arrays or other user-owned values.
+        byte[] registrationPayload = serializer.hasKey() && (statusInfo & 2) == 0
+                ? (serializer.supportsKeySerialization() ? serializer.serializeKey(value) : payload) : null;
         long sequenceNumber = userSequence.get();
-        if (!history.tryPut(sequenceNumber, payload, relatedSampleIdentity)) {
-            throw new IOException("writer history resource limit reached");
+        if (!history.tryPut(sequenceNumber, payload, relatedSampleIdentity, key, statusInfo, keyOnly)) {
+            throw new ResourceLimitException("writer history resource limit reached");
         }
         userSequence.incrementAndGet();
+        if (serializer.hasKey()) {
+            if ((statusInfo & 2) != 0) registeredInstances.remove(key);
+            else registeredInstances.put(key, registrationPayload.clone());
+        }
         sendUserData(sequenceNumber, payload, relatedSampleIdentity);
         livelinessAsserter.onDataWritten();
         return new SampleIdentity(guid(), sequenceNumber);
@@ -209,7 +237,7 @@ public final class RtpsDataWriter<T> implements Closeable {
             ReaderMatch match = entry.getValue();
             if (match.replayPending) {
                 long first = Math.max(match.firstSequence, history.firstSequenceNumber().orElse(userSequence.get()));
-                for (long sequence = first; sequence <= match.historicalLastSequence; sequence++) {
+                for (long sequence : history.sequences(first, match.historicalLastSequence)) {
                     var payload = history.get(sequence);
                     if (payload.isPresent()) sendDirectedData(entry.getKey(), sequence, payload.get());
                 }
@@ -290,7 +318,9 @@ public final class RtpsDataWriter<T> implements Closeable {
         } else {
             RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
             message.infoTs(RtpsTimestamp.now());
-            if (related == null) message.data(reader.entityId(), entityId, sequence, payload);
+            if (history.statusInfo(sequence) != 0) message.instanceChange(reader.entityId(), entityId,
+                    sequence, payload, history.statusInfo(sequence), history.keyOnly(sequence));
+            else if (related == null) message.data(reader.entityId(), entityId, sequence, payload);
             else message.dataWithRelatedSampleIdentity(reader.entityId(), entityId, sequence,
                     related.writerGuid(), related.sequenceNumber(), payload);
             sendDirected(message.bytes(), reader);
@@ -323,7 +353,11 @@ public final class RtpsDataWriter<T> implements Closeable {
     private void sendUserDataComplete(long sequenceNumber, byte[] payload, SampleIdentity relatedSampleIdentity) throws IOException {
         RtpsMessageBuilder message = new RtpsMessageBuilder(guidPrefix);
         message.infoTs(RtpsTimestamp.now());
-        if (relatedSampleIdentity != null) {
+        if (history.statusInfo(sequenceNumber) != 0) {
+            message.instanceChange(RtpsEntity.UNKNOWN, entityId, sequenceNumber, payload,
+                    history.statusInfo(sequenceNumber), history.keyOnly(sequenceNumber));
+            sendToUserLocators(message.bytes());
+        } else if (relatedSampleIdentity != null) {
             message.dataWithRelatedSampleIdentity(
                     RtpsEntity.UNKNOWN, entityId, sequenceNumber,
                     relatedSampleIdentity.writerGuid(), relatedSampleIdentity.sequenceNumber(),
@@ -410,10 +444,32 @@ public final class RtpsDataWriter<T> implements Closeable {
 
     @Override
     public synchronized void close() throws IOException {
+        if (!running.get()) return;
+        List<Closeable> resources = new ArrayList<>();
+        // Closing a writer unregisters its instances. Shutdown notifications do not need
+        // cache space: the writer's retained history is released immediately afterwards.
+        for (byte[] payload : registeredInstances.values()) {
+            try {
+                boolean keyOnly = serializer.supportsKeySerialization();
+                long sequence = userSequence.getAndIncrement();
+                if (fragmentSender.requiresFragmentation(payload)) {
+                    var sender = new FragmentSender(FragmentSender.DEFAULT_FRAGMENT_SIZE,
+                            FragmentSender.DEFAULT_FRAGMENTATION_THRESHOLD, ignored -> Optional.empty(),
+                            ignored -> 2, ignored -> keyOnly);
+                    sender.sendFragmented(guidPrefix, RtpsEntity.UNKNOWN, entityId, sequence,
+                            payload, message -> sendToUserLocators(message));
+                } else {
+                    var message = new RtpsMessageBuilder(guidPrefix);
+                    message.instanceChange(RtpsEntity.UNKNOWN, entityId, sequence, payload, 2, keyOnly);
+                    sendToUserLocators(message.bytes());
+                }
+            } catch (IOException | RuntimeException failure) {
+                resources.add(() -> { throw new IOException("Failed to unregister instance on close", failure); });
+            }
+        }
         if (!running.compareAndSet(true, false)) {
             return;
         }
-        List<Closeable> resources = new ArrayList<>();
         resources.add(livelinessAsserter);
         resources.add(() -> participant.unregister(guid(), true));
         resources.add(nackFragListener);
@@ -424,6 +480,7 @@ public final class RtpsDataWriter<T> implements Closeable {
         } finally {
             history.clear();
             readerMatches.clear();
+            registeredInstances.clear();
         }
     }
 }

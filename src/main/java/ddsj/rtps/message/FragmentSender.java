@@ -6,6 +6,8 @@ import ddsj.rtps.types.GuidPrefix;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.function.LongFunction;
+import java.util.function.LongToIntFunction;
+import java.util.function.LongPredicate;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -30,6 +32,8 @@ public final class FragmentSender {
     private final int fragmentSize;
     private final int fragmentationThreshold;
     private final LongFunction<Optional<byte[]>> payloadLookup;
+    private final LongToIntFunction statusLookup;
+    private final LongPredicate keyOnlyLookup;
     private final AtomicInteger heartbeatFragCount = new AtomicInteger(1);
 
     public FragmentSender() {
@@ -42,7 +46,14 @@ public final class FragmentSender {
 
     /** The lookup borrows samples from the writer history; this sender retains no payloads. */
     public FragmentSender(int fragmentSize, int fragmentationThreshold, LongFunction<Optional<byte[]>> payloadLookup) {
+        this(fragmentSize, fragmentationThreshold, payloadLookup, ignored -> 0, ignored -> false);
+    }
+
+    public FragmentSender(int fragmentSize, int fragmentationThreshold, LongFunction<Optional<byte[]>> payloadLookup,
+            LongToIntFunction statusLookup, LongPredicate keyOnlyLookup) {
         this.payloadLookup = Objects.requireNonNull(payloadLookup);
+        this.statusLookup = Objects.requireNonNull(statusLookup);
+        this.keyOnlyLookup = Objects.requireNonNull(keyOnlyLookup);
         if (fragmentSize <= 0) {
             throw new IllegalArgumentException("fragmentSize must be positive");
         }
@@ -195,7 +206,8 @@ public final class FragmentSender {
 
         RtpsMessageBuilder builder = new RtpsMessageBuilder(guidPrefix);
         builder.dataFrag(readerId, writerId, sequenceNumber,
-                fragmentNum, 1, fragmentSize, sampleSize, fragmentData, relatedIdentity);
+                fragmentNum, 1, fragmentSize, sampleSize, fragmentData, relatedIdentity,
+                statusLookup.applyAsInt(sequenceNumber), keyOnlyLookup.test(sequenceNumber));
         return builder.bytes();
     }
 

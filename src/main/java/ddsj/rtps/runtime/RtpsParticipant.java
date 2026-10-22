@@ -160,10 +160,15 @@ public final class RtpsParticipant implements Closeable {
     }
 
     synchronized EntityId allocateEntityId(boolean writer) {
+        return allocateEntityId(writer, false);
+    }
+
+    synchronized EntityId allocateEntityId(boolean writer, boolean keyed) {
         ensureOpen();
         int key = writer ? nextWriterKey++ : nextReaderKey++;
         if (key > 0xffffff) throw new IllegalStateException("participant entity IDs exhausted");
-        return new EntityId(new byte[]{(byte) (key >>> 16), (byte) (key >>> 8), (byte) key, (byte) (writer ? 3 : 4)});
+        return new EntityId(new byte[]{(byte) (key >>> 16), (byte) (key >>> 8), (byte) key,
+                (byte) (writer ? (keyed ? 2 : 3) : (keyed ? 7 : 4))});
     }
 
     synchronized void register(Guid guid, LocalEndpoint endpoint, Closeable resource, boolean writer) {

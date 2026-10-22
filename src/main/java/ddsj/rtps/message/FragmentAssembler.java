@@ -52,7 +52,7 @@ public final class FragmentAssembler {
                     fragment.writerGuid(),
                     fragment.sequenceNumber(),
                     assembled,
-                    pending.timestamp, pending.relatedIdentity()));
+                    pending.timestamp, pending.relatedIdentity(), pending.statusInfo, pending.keyOnly));
         }
 
         return Optional.empty();
@@ -95,6 +95,8 @@ public final class FragmentAssembler {
         private final Optional<RtpsTimestamp> timestamp;
         private int receivedCount;
         private Optional<SampleIdentity> relatedIdentity = Optional.empty();
+        private int statusInfo;
+        private boolean keyOnly;
 
         synchronized Optional<SampleIdentity> relatedIdentity() {
             return relatedIdentity;
@@ -110,6 +112,8 @@ public final class FragmentAssembler {
         }
 
         synchronized void addFragment(DataFragment fragment) {
+            statusInfo = fragment.statusInfo();
+            keyOnly = fragment.keyOnly();
             if (fragment.relatedSampleIdentity().isPresent()) {
                 relatedIdentity = fragment.relatedSampleIdentity();
             }

@@ -64,13 +64,13 @@ public final class QosConverter {
     /**
      * Converts ResourceLimitsQosPolicy to RTPS ResourceLimits.
      * <p>
-     * Note: RTPS ResourceLimits only supports maxSamples.
+     * All sample and instance limits are applied by the RTPS caches.
      *
      * @param qos the DDS resource limits
      * @return the RTPS resource limits
      */
     public static ResourceLimits toResourceLimits(ResourceLimitsQosPolicy qos) {
-        return new ResourceLimits(qos.maxSamples());
+        return new ResourceLimits(qos.maxSamples(), qos.maxInstances(), qos.maxSamplesPerInstance());
     }
 
     private static EndpointQos.ReliabilityKind convertReliability(ReliabilityQosPolicy policy) {

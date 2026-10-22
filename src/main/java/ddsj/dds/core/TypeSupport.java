@@ -13,7 +13,7 @@ import java.util.Objects;
  *
  * @param <T> the data type
  */
-public interface TypeSupport<T> {
+public interface TypeSupport<T> extends PayloadSerializer<T> {
 
     /**
      * Returns the type name used for discovery and matching.
@@ -71,7 +71,7 @@ public interface TypeSupport<T> {
     }
 
     /**
-     * Creates cached, unkeyed plain CDR (XCDR1) support for a record.
+     * Creates cached plain CDR (XCDR1) support for a record, using {@link CdrKey} components as keys.
      * Components are encoded in declaration order with CDR alignment. Serialization
      * includes a CDR_LE encapsulation header; deserialization accepts plain XCDR1
      * and XCDR2 in either byte order. Records are treated as FINAL structs.
@@ -82,7 +82,7 @@ public interface TypeSupport<T> {
      * unless annotated with {@link CdrFixedLength}. Null values, embedded NULs,
      * invalid Unicode, boxed primitives, and recursive record schemas are rejected.
      * The discovery type name is the record's binary class name. Both endpoints must
-     * use the same schema. Keys and schema evolution are not supported.
+     * use the same schema. Schema evolution is not supported.
      * Decoding limits total array elements to {@link ddsj.cdr.CdrReader#DEFAULT_MAX_ARRAY_ELEMENTS};
      * use {@link ddsj.cdr.CdrPayloadSerializer} with {@link CdrRecordTypeSupport#codec()}
      * to configure another limit.
@@ -93,7 +93,7 @@ public interface TypeSupport<T> {
     }
 
     /**
-     * Creates unkeyed CDR record support with an explicit DDS discovery type name.
+     * Creates CDR record support with an explicit DDS discovery type name.
      * The name is used verbatim; ROS message names are not converted to DDS names.
      * Encoding and supported components are the same as {@link #forCdrRecord(Class)}.
      * Record metadata is shared with the cached default support.
@@ -109,6 +109,11 @@ public interface TypeSupport<T> {
             @Override public Class<T> getType() { return codec.getType(); }
             @Override public byte[] serialize(T value) { return codec.serialize(value); }
             @Override public T deserialize(byte[] data) { return codec.deserialize(data); }
+            @Override public boolean hasKey() { return codec.hasKey(); }
+            @Override public Object extractKey(T value) { return codec.extractKey(value); }
+            @Override public boolean supportsKeySerialization() { return codec.supportsKeySerialization(); }
+            @Override public byte[] serializeKey(T value) { return codec.serializeKey(value); }
+            @Override public T deserializeKey(byte[] data) { return codec.deserializeKey(data); }
         };
     }
 
@@ -147,6 +152,11 @@ public interface TypeSupport<T> {
             public T deserialize(byte[] data) {
                 return serializer.deserialize(data);
             }
+            @Override public boolean hasKey() { return serializer.hasKey(); }
+            @Override public Object extractKey(T value) { return serializer.extractKey(value); }
+            @Override public boolean supportsKeySerialization() { return serializer.supportsKeySerialization(); }
+            @Override public byte[] serializeKey(T value) { return serializer.serializeKey(value); }
+            @Override public T deserializeKey(byte[] payload) { return serializer.deserializeKey(payload); }
         };
     }
 
@@ -198,6 +208,9 @@ public interface TypeSupport<T> {
             public Object extractKey(T value) {
                 return keyExtractor.apply(value);
             }
+            @Override public boolean supportsKeySerialization() { return serializer.supportsKeySerialization(); }
+            @Override public byte[] serializeKey(T value) { return serializer.serializeKey(value); }
+            @Override public T deserializeKey(byte[] payload) { return serializer.deserializeKey(payload); }
         };
     }
 }

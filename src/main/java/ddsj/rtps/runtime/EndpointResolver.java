@@ -17,6 +17,7 @@ import java.util.Set;
 /** Resolves matches and destinations against the current discovery state. */
 final class EndpointResolver {
     private final LocalEndpoint local;
+    private final boolean keyed;
     private final RemoteParticipantStore participants;
     private final RemoteEndpointStore<RemotePublication> publications;
     private final RemoteEndpointStore<RemoteSubscription> subscriptions;
@@ -24,6 +25,13 @@ final class EndpointResolver {
     EndpointResolver(LocalEndpoint local, RemoteParticipantStore participants,
             RemoteEndpointStore<RemotePublication> publications,
             RemoteEndpointStore<RemoteSubscription> subscriptions) {
+        this(local, participants, publications, subscriptions, false);
+    }
+
+    EndpointResolver(LocalEndpoint local, RemoteParticipantStore participants,
+            RemoteEndpointStore<RemotePublication> publications,
+            RemoteEndpointStore<RemoteSubscription> subscriptions, boolean keyed) {
+        this.keyed = keyed;
         this.local = local;
         this.participants = participants;
         this.publications = publications;
@@ -65,6 +73,9 @@ final class EndpointResolver {
     }
 
     private boolean matches(RemoteEndpoint remote, EndpointQos offered, EndpointQos requested) {
+        int entityKind = remote.endpointGuid().entityId().bytes()[3] & 0xff;
+        if ((entityKind == 2 || entityKind == 7) && !keyed) return false;
+        if ((entityKind == 3 || entityKind == 4) && keyed) return false;
         boolean topicMatch = remote.topicName().equals(local.topicName());
         boolean typeMatch = remote.typeName().equals(local.typeName());
         boolean qosMatch = offered.isCompatibleWithRequested(requested);

@@ -80,20 +80,12 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
         );
         PayloadSerializer<T> serializer = createSerializer(topic.getTypeSupport());
         this.rtpsReader = subscriber.getParticipant().rtpsParticipant().createReader(endpoint, serializer);
+        this.rtpsReader.setRetainedSampleUsage(sampleCache::size, key -> (int) sampleCache.stream()
+                .filter(c -> Objects.equals(topic.getTypeSupport().extractKey(c.data), key)).count());
     }
 
     private PayloadSerializer<T> createSerializer(TypeSupport<T> typeSupport) {
-        return new PayloadSerializer<>() {
-            @Override
-            public byte[] serialize(T value) {
-                return typeSupport.serialize(value);
-            }
-
-            @Override
-            public T deserialize(byte[] payload) {
-                return typeSupport.deserialize(payload);
-            }
-        };
+        return typeSupport;
     }
 
     // ========== Read Operations ==========
@@ -126,7 +118,7 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
      * @param instanceStates instance states to match
      * @return list of samples
      */
-    public List<Sample<T>> read(int maxSamples, Set<SampleState> sampleStates,
+    public synchronized List<Sample<T>> read(int maxSamples, Set<SampleState> sampleStates,
                                 Set<ViewState> viewStates, Set<InstanceState> instanceStates) {
         ensureOpen();
         fetchFromRtps();
@@ -194,7 +186,7 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
      * @param instanceStates instance states to match
      * @return list of samples
      */
-    public List<Sample<T>> take(int maxSamples, Set<SampleState> sampleStates,
+    public synchronized List<Sample<T>> take(int maxSamples, Set<SampleState> sampleStates,
                                 Set<ViewState> viewStates, Set<InstanceState> instanceStates) {
         ensureOpen();
         fetchFromRtps();
@@ -273,7 +265,9 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
      * @param keyHolder data containing the key
      * @return the instance handle, or NIL if not found
      */
-    public InstanceHandle lookupInstance(T keyHolder) {
+    public synchronized InstanceHandle lookupInstance(T keyHolder) {
+        ensureOpen();
+        fetchFromRtps();
         if (!topic.getTypeSupport().hasKey()) {
             return InstanceHandle.NIL;
         }
@@ -407,21 +401,69 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
     // ========== Internal ==========
 
     private void fetchFromRtps() {
-        List<ReceivedSample<T>> newSamples = rtpsReader.drainWithMetadata();
-        for (ReceivedSample<T> received : newSamples) {
+        Optional<ReceivedSample<T>> nextSample;
+        while ((nextSample = rtpsReader.pollWithMetadata()).isPresent()) {
+            ReceivedSample<T> received = nextSample.get();
             T data = received.data();
             InstanceHandle handle = getOrCreateInstanceHandle(data);
             InstanceInfo info = getOrCreateInstanceInfo(data);
 
+            if (received.instanceSnapshot().isPresent()) {
+                var snapshot = received.instanceSnapshot().get();
+                InstanceState next = switch (snapshot.state()) {
+                    case 1 -> InstanceState.NOT_ALIVE_DISPOSED;
+                    case 2 -> InstanceState.NOT_ALIVE_NO_WRITERS;
+                    default -> InstanceState.ALIVE;
+                };
+                if (next == InstanceState.ALIVE && info.state != InstanceState.ALIVE) info.isNew = true;
+                info.state = next;
+                info.writers.clear();
+                info.writers.addAll(snapshot.writers());
+                info.disposedGenerations = snapshot.disposedGenerations();
+                info.noWritersGenerations = snapshot.noWritersGenerations();
+            } else if (received.validData()) {
+                info.writers.add(received.writerGuid());
+                if (info.state == InstanceState.NOT_ALIVE_DISPOSED) info.disposedGenerations++;
+                if (info.state == InstanceState.NOT_ALIVE_NO_WRITERS) info.noWritersGenerations++;
+                if (info.state != InstanceState.ALIVE) info.isNew = true;
+                info.state = InstanceState.ALIVE;
+            } else {
+                if ((received.statusInfo() & 2) != 0) info.writers.remove(received.writerGuid());
+                else info.writers.add(received.writerGuid());
+                if ((received.statusInfo() & 1) != 0) info.state = InstanceState.NOT_ALIVE_DISPOSED;
+                else if (info.writers.isEmpty() && info.state != InstanceState.NOT_ALIVE_DISPOSED) {
+                    info.state = InstanceState.NOT_ALIVE_NO_WRITERS;
+                }
+            }
+            // Instance state is shared by all cached samples belonging to the instance.
+            for (var cached : sampleCache) {
+                if (cached.originalInfo.instanceHandle().equals(handle)) cached.instanceState = info.state;
+            }
+
+            if (qos.get().history().kind() == ddsj.dds.qos.policies.HistoryQosPolicy.Kind.KEEP_LAST) {
+                long count = sampleCache.stream().filter(c -> c.originalInfo.instanceHandle().equals(handle)).count();
+                if (count >= qos.get().history().depth()) {
+                    CachedSample<T> oldest = null;
+                    for (var cached : sampleCache) {
+                        if (cached.originalInfo.instanceHandle().equals(handle)
+                                && (oldest == null || (cached.writerGuid.equals(oldest.writerGuid)
+                                && cached.writerSequenceNumber < oldest.writerSequenceNumber))) oldest = cached;
+                    }
+                    if (oldest.writerGuid.equals(received.writerGuid())
+                            && oldest.writerSequenceNumber > received.sequenceNumber()) continue;
+                    sampleCache.remove(oldest);
+                }
+            }
+
             SampleInfo sampleInfo = new SampleInfo(
                     SampleState.NOT_READ,
                     info.isNew ? ViewState.NEW : ViewState.NOT_NEW,
-                    InstanceState.ALIVE,
+                    info.state,
                     Instant.now(),
                     handle,
                     InstanceHandle.NIL, // publication handle not available in simple impl
-                    0, 0, 0, 0, 0,
-                    true
+                    info.disposedGenerations, info.noWritersGenerations, 0, 0, 0,
+                    received.validData()
             );
             sampleCache.add(new CachedSample<>(data, sampleInfo, received.relatedSampleIdentity(), received.sequenceNumber(), received.writerGuid()));
             info.isNew = false;
@@ -501,6 +543,10 @@ public final class DataReader<T> implements Entity<DataReaderListener> {
     private static class InstanceInfo {
         final InstanceHandle handle;
         boolean isNew = true;
+        final Set<Guid> writers = new java.util.HashSet<>();
+        InstanceState state = InstanceState.ALIVE;
+        long disposedGenerations;
+        long noWritersGenerations;
 
         InstanceInfo(InstanceHandle handle) {
             this.handle = handle;

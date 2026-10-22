@@ -18,5 +18,19 @@ public record ReceivedSample<T>(
         T data,
         Guid writerGuid,
         long sequenceNumber,
-        Optional<SampleIdentity> relatedSampleIdentity) {
+        Optional<SampleIdentity> relatedSampleIdentity,
+        int statusInfo,
+        Optional<InstanceSnapshot> instanceSnapshot,
+        boolean validData) {
+    public ReceivedSample(T data, Guid writerGuid, long sequenceNumber,
+            Optional<SampleIdentity> relatedSampleIdentity, int statusInfo, Optional<InstanceSnapshot> instanceSnapshot) {
+        this(data, writerGuid, sequenceNumber, relatedSampleIdentity, statusInfo, instanceSnapshot, statusInfo == 0);
+    }
+    public ReceivedSample(T data, Guid writerGuid, long sequenceNumber,
+            Optional<SampleIdentity> relatedSampleIdentity, int statusInfo) {
+        this(data, writerGuid, sequenceNumber, relatedSampleIdentity, statusInfo, Optional.empty());
+    }
+    public ReceivedSample(T data, Guid writerGuid, long sequenceNumber, Optional<SampleIdentity> relatedSampleIdentity) {
+        this(data, writerGuid, sequenceNumber, relatedSampleIdentity, 0);
+    }
 }

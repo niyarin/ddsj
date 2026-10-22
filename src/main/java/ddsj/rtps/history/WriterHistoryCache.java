@@ -1,65 +1,85 @@
 package ddsj.rtps.history;
 
 import ddsj.rtps.qos.EndpointQos.HistoryKind;
-import java.util.Optional;
 import ddsj.rtps.message.SampleIdentity;
-import java.util.TreeMap;
-import java.util.Objects;
+import java.util.*;
 
-/** Sole owner of serialized writer samples, including fragmented samples. */
+/** Owns serialized samples; KEEP_LAST depth is applied independently to each key. */
 public final class WriterHistoryCache {
-    private final int capacity;
     private final HistoryKind kind;
+    private final int perInstanceCapacity;
+    private final ResourceLimits limits;
     private final TreeMap<Long, Entry> samples = new TreeMap<>();
+    private final Map<Object, NavigableSet<Long>> instances = new HashMap<>();
 
-    public WriterHistoryCache() {
-        this(128);
-    }
+    public WriterHistoryCache() { this(128); }
     public WriterHistoryCache(int maxSamples) {
         this(HistoryKind.KEEP_LAST, maxSamples, new ResourceLimits(maxSamples));
     }
     public WriterHistoryCache(HistoryKind kind, int depth, ResourceLimits limits) {
         this.kind = Objects.requireNonNull(kind);
-        if (depth <= 0 || (kind == HistoryKind.KEEP_LAST && depth > limits.maxSamples())) {
+        this.limits = Objects.requireNonNull(limits);
+        if (depth <= 0 || (kind == HistoryKind.KEEP_LAST
+                && (depth > limits.maxSamples() || depth > limits.maxSamplesPerInstance()))) {
             throw new IllegalArgumentException("invalid history depth");
         }
-        capacity = kind == HistoryKind.KEEP_LAST ? depth : limits.maxSamples();
+        perInstanceCapacity = kind == HistoryKind.KEEP_LAST ? depth : limits.maxSamplesPerInstance();
     }
-
-    /** Rejects a new KEEP_ALL sample when full; existing samples are never evicted. */
-    public synchronized boolean tryPut(long sequenceNumber, byte[] payload) {
-        return tryPut(sequenceNumber, payload, null);
+    public boolean tryPut(long sequence, byte[] payload) { return tryPut(sequence, payload, null); }
+    public boolean tryPut(long sequence, byte[] payload, SampleIdentity related) {
+        return tryPut(sequence, payload, related, null, 0, false);
     }
-    public synchronized boolean tryPut(long sequenceNumber, byte[] payload, SampleIdentity relatedIdentity) {
-        if (kind == HistoryKind.KEEP_ALL && samples.size() >= capacity && !samples.containsKey(sequenceNumber)) {
-            return false;
-        }
-        samples.put(sequenceNumber, new Entry(payload.clone(), relatedIdentity));
-        while (samples.size() > capacity) {
-            samples.pollFirstEntry();
-        }
+    /** Rejection is atomic: limits never evict another instance's retained history. */
+    public synchronized boolean tryPut(long sequence, byte[] payload, SampleIdentity related,
+            Object key, int statusInfo, boolean keyOnly) {
+        NavigableSet<Long> retained = instances.get(key);
+        if (retained == null && instances.size() >= limits.maxInstances()) return false;
+        boolean replacing = samples.containsKey(sequence);
+        boolean evict = !replacing && kind == HistoryKind.KEEP_LAST && retained != null
+                && retained.size() >= perInstanceCapacity;
+        if (!replacing && !evict && samples.size() >= limits.maxSamples()) return false;
+        if (!replacing && kind == HistoryKind.KEEP_ALL && retained != null
+                && retained.size() >= perInstanceCapacity) return false;
+        if (replacing) remove(sequence);
+        if (evict) remove(retained.first());
+        samples.put(sequence, new Entry(payload.clone(), related, key, statusInfo, keyOnly));
+        instances.computeIfAbsent(key, ignored -> new TreeSet<>()).add(sequence);
         return true;
     }
-    public void put(long sequenceNumber, byte[] payload) {
-        if (!tryPut(sequenceNumber, payload)) {
-            throw new IllegalStateException("writer history is full");
-        }
+    private void remove(long sequence) {
+        Entry entry = samples.remove(sequence);
+        if (entry == null) return;
+        var retained = instances.get(entry.key);
+        retained.remove(sequence);
+        if (retained.isEmpty()) instances.remove(entry.key);
     }
-    public synchronized Optional<byte[]> get(long sequenceNumber) {
-        return Optional.ofNullable(samples.get(sequenceNumber)).map(entry -> entry.payload().clone());
+    public void put(long sequence, byte[] payload) {
+        if (!tryPut(sequence, payload)) throw new IllegalStateException("writer history is full");
     }
-    public synchronized Optional<SampleIdentity> relatedSampleIdentity(long sequenceNumber) {
-        return Optional.ofNullable(samples.get(sequenceNumber)).map(Entry::relatedIdentity);
+    public synchronized Optional<byte[]> get(long sequence) {
+        return Optional.ofNullable(samples.get(sequence)).map(e -> e.payload.clone());
     }
-    private record Entry(byte[] payload, SampleIdentity relatedIdentity) {}
-
+    public synchronized Optional<SampleIdentity> relatedSampleIdentity(long sequence) {
+        return Optional.ofNullable(samples.get(sequence)).map(Entry::related);
+    }
+    public synchronized int statusInfo(long sequence) {
+        Entry entry = samples.get(sequence);
+        return entry == null ? 0 : entry.statusInfo;
+    }
+    public synchronized boolean keyOnly(long sequence) {
+        Entry entry = samples.get(sequence);
+        return entry != null && entry.keyOnly;
+    }
+    /** Snapshot avoids scanning gaps between different instances' retained sequences. */
+    public synchronized List<Long> sequences(long first, long last) {
+        return first > last ? List.of() : List.copyOf(samples.subMap(first, true, last, true).keySet());
+    }
+    private record Entry(byte[] payload, SampleIdentity related, Object key, int statusInfo, boolean keyOnly) { }
     public synchronized Optional<Long> firstSequenceNumber() {
         return samples.isEmpty() ? Optional.empty() : Optional.of(samples.firstKey());
     }
     public synchronized Optional<Long> lastSequenceNumber() {
         return samples.isEmpty() ? Optional.empty() : Optional.of(samples.lastKey());
     }
-    public synchronized void clear() {
-        samples.clear();
-    }
+    public synchronized void clear() { samples.clear(); instances.clear(); }
 }

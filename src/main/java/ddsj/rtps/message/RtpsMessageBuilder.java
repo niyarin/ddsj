@@ -51,6 +51,30 @@ public final class RtpsMessageBuilder {
         submessage(RtpsSubmessageKind.DATA, 0x05, body.toByteArray());
     }
 
+    /** Lifecycle DATA uses PID_STATUS_INFO and, when available, a serialized-key payload. */
+    public void instanceChange(EntityId readerId, EntityId writerId, long sequence,
+            byte[] payload, int statusInfo, boolean keyOnly) {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.writeBytes(RtpsIo.shortLe(0));
+        body.writeBytes(RtpsIo.shortLe(16));
+        body.writeBytes(readerId.bytes());
+        body.writeBytes(writerId.bytes());
+        body.writeBytes(RtpsIo.intLe((int) (sequence >>> 32)));
+        body.writeBytes(RtpsIo.intLe((int) sequence));
+        writeStatus(body, statusInfo);
+        body.writeBytes(payload);
+        submessage(RtpsSubmessageKind.DATA, keyOnly ? 0x0b : 0x07, body.toByteArray());
+    }
+
+    private static void writeStatus(ByteArrayOutputStream body, int statusInfo) {
+        body.writeBytes(RtpsIo.shortLe(ParameterId.STATUS_INFO));
+        body.writeBytes(RtpsIo.shortLe(4));
+        // StatusInfo is an octet array, independent of the submessage byte order.
+        body.writeBytes(new byte[]{0, 0, 0, (byte) statusInfo});
+        body.writeBytes(RtpsIo.shortLe(ParameterId.SENTINEL));
+        body.writeBytes(RtpsIo.shortLe(0));
+    }
+
     /**
      * Sends DATA with related_sample_identity in Inline QoS.
      * Used for DDS-RPC service responses to correlate with requests.
@@ -110,6 +134,13 @@ public final class RtpsMessageBuilder {
     public void dataFrag(EntityId readerId, EntityId writerId, long sequenceNumber,
                          int fragmentStartingNum, int fragmentsInSubmessage,
                          int fragmentSize, int sampleSize, byte[] fragmentData, SampleIdentity relatedIdentity) {
+        dataFrag(readerId, writerId, sequenceNumber, fragmentStartingNum, fragmentsInSubmessage,
+                fragmentSize, sampleSize, fragmentData, relatedIdentity, 0, false);
+    }
+
+    public void dataFrag(EntityId readerId, EntityId writerId, long sequenceNumber,
+            int fragmentStartingNum, int fragmentsInSubmessage, int fragmentSize, int sampleSize,
+            byte[] fragmentData, SampleIdentity relatedIdentity, int statusInfo, boolean keyOnly) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes(RtpsIo.shortLe(0)); // extraFlags
         body.writeBytes(RtpsIo.shortLe(28)); // octetsToInlineQos
@@ -121,11 +152,13 @@ public final class RtpsMessageBuilder {
         body.writeBytes(RtpsIo.shortLe(fragmentsInSubmessage));
         body.writeBytes(RtpsIo.shortLe(fragmentSize));
         body.writeBytes(RtpsIo.intLe(sampleSize));
-        if (relatedIdentity != null) {
+        if (statusInfo != 0) writeStatus(body, statusInfo);
+        else if (relatedIdentity != null) {
             writeRelatedIdentity(body, relatedIdentity.writerGuid(), relatedIdentity.sequenceNumber());
         }
         body.writeBytes(fragmentData);
-        submessage(RtpsSubmessageKind.DATA_FRAG, relatedIdentity == null ? 0x01 : 0x03, body.toByteArray());
+        int flags = 0x01 | (statusInfo != 0 || relatedIdentity != null ? 0x02 : 0) | (keyOnly ? 0x04 : 0);
+        submessage(RtpsSubmessageKind.DATA_FRAG, flags, body.toByteArray());
     }
 
     public void dataDispose(EntityId readerId, EntityId writerId, long sequenceNumber, Guid endpointGuid) {

@@ -12,6 +12,7 @@ import ddsj.rtps.discovery.LocalEndpoint;
 import ddsj.rtps.message.SampleIdentity;
 import ddsj.rtps.runtime.PayloadSerializer;
 import ddsj.rtps.runtime.RtpsDataWriter;
+import ddsj.rtps.runtime.ResourceLimitException;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -73,17 +74,7 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
     }
 
     private PayloadSerializer<T> createSerializer(TypeSupport<T> typeSupport) {
-        return new PayloadSerializer<>() {
-            @Override
-            public byte[] serialize(T value) {
-                return typeSupport.serialize(value);
-            }
-
-            @Override
-            public T deserialize(byte[] payload) {
-                return typeSupport.deserialize(payload);
-            }
-        };
+        return typeSupport;
     }
 
     // ========== Write Operations ==========
@@ -105,14 +96,19 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
      * @param handle the instance handle (NIL for auto-detect)
      * @return OK if successful
      */
-    public ReturnCode write(T data, InstanceHandle handle) {
+    public synchronized ReturnCode write(T data, InstanceHandle handle) {
         ensureOpen();
         try {
-            if (topic.getTypeSupport().hasKey() && handle.isNil()) {
+            if (topic.getTypeSupport().hasKey()) {
+                if (!handle.isNil() && !handle.equals(lookupInstance(data))) return ReturnCode.BAD_PARAMETER;
                 registerInstance(data);
             }
             rtpsWriter.write(data);
             return ReturnCode.OK;
+        } catch (ResourceLimitException e) {
+            return ReturnCode.OUT_OF_RESOURCES;
+        } catch (DdsException e) {
+            return e.getReturnCode();
         } catch (IOException e) {
             return ReturnCode.ERROR;
         }
@@ -134,6 +130,8 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
                 registerInstance(data);
             }
             return rtpsWriter.writeRequest(data);
+        } catch (ResourceLimitException e) {
+            throw new DdsException(ReturnCode.OUT_OF_RESOURCES, "Failed to write RPC request", e);
         } catch (IOException e) {
             throw new DdsException(ReturnCode.ERROR, "Failed to write RPC request", e);
         }
@@ -162,8 +160,13 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
     public ReturnCode writeWithRelatedSampleIdentity(T data, SampleIdentity relatedSampleIdentity) {
         ensureOpen();
         try {
+            if (topic.getTypeSupport().hasKey()) registerInstance(data);
             rtpsWriter.write(data, relatedSampleIdentity);
             return ReturnCode.OK;
+        } catch (ResourceLimitException e) {
+            return ReturnCode.OUT_OF_RESOURCES;
+        } catch (DdsException e) {
+            return e.getReturnCode();
         } catch (IOException e) {
             return ReturnCode.ERROR;
         }
@@ -177,11 +180,15 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
      * @param data the data containing the key
      * @return the instance handle, or NIL if unkeyed
      */
-    public InstanceHandle registerInstance(T data) {
+    public synchronized InstanceHandle registerInstance(T data) {
+        ensureOpen();
         if (!topic.getTypeSupport().hasKey()) {
             return InstanceHandle.NIL;
         }
-        Object key = topic.getTypeSupport().extractKey(data);
+        Object key = Objects.requireNonNull(topic.getTypeSupport().extractKey(data), "instance key");
+        if (!instanceRegistry.containsKey(key) && instanceRegistry.size() >= qos.get().resourceLimits().maxInstances()) {
+            throw new DdsException(ReturnCode.OUT_OF_RESOURCES, "instance limit reached");
+        }
         return instanceRegistry.computeIfAbsent(key,
                 k -> InstanceHandle.of(instanceCounter.getAndIncrement()));
     }
@@ -204,13 +211,24 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
      * @param handle the instance handle
      * @return OK if successful
      */
-    public ReturnCode unregisterInstance(T data, InstanceHandle handle) {
+    public synchronized ReturnCode unregisterInstance(T data, InstanceHandle handle) {
+        ensureOpen();
         if (!topic.getTypeSupport().hasKey()) {
             return ReturnCode.OK;
         }
         Object key = topic.getTypeSupport().extractKey(data);
-        instanceRegistry.remove(key);
-        return ReturnCode.OK;
+        InstanceHandle registered = instanceRegistry.get(key);
+        if (registered == null) return ReturnCode.PRECONDITION_NOT_MET;
+        if (!handle.isNil() && !handle.equals(registered)) return ReturnCode.BAD_PARAMETER;
+        try {
+            rtpsWriter.unregisterInstance(data);
+            instanceRegistry.remove(key);
+            return ReturnCode.OK;
+        } catch (ResourceLimitException e) {
+            return ReturnCode.OUT_OF_RESOURCES;
+        } catch (IOException e) {
+            return ReturnCode.ERROR;
+        }
     }
 
     /**
@@ -220,9 +238,21 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
      * @param handle the instance handle
      * @return OK if successful
      */
-    public ReturnCode dispose(T data, InstanceHandle handle) {
-        // Dispose is similar to unregister in simple implementation
-        return unregisterInstance(data, handle);
+    public synchronized ReturnCode dispose(T data, InstanceHandle handle) {
+        ensureOpen();
+        if (!topic.getTypeSupport().hasKey()) return ReturnCode.OK;
+        if (!handle.isNil() && !handle.equals(lookupInstance(data))) return ReturnCode.BAD_PARAMETER;
+        try {
+            registerInstance(data);
+            rtpsWriter.dispose(data);
+            return ReturnCode.OK;
+        } catch (ResourceLimitException e) {
+            return ReturnCode.OUT_OF_RESOURCES;
+        } catch (DdsException e) {
+            return e.getReturnCode();
+        } catch (IOException e) {
+            return ReturnCode.ERROR;
+        }
     }
 
     /**
@@ -345,6 +375,8 @@ public final class DataWriter<T> implements Entity<DataWriterListener> {
                 rtpsWriter.close();
             } catch (IOException e) {
                 throw new DdsException(ReturnCode.ERROR, "Failed to close RTPS writer", e);
+            } finally {
+                instanceRegistry.clear();
             }
         }
     }

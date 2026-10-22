@@ -14,6 +14,7 @@ import ddsj.rtps.discovery.RemotePublication;
 import ddsj.rtps.discovery.RemoteSubscription;
 import ddsj.rtps.runtime.RtpsParticipant;
 import ddsj.rtps.transport.RtpsParticipantConfig;
+import ddsj.rtps.transport.RtpsTransport;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -58,6 +59,10 @@ public final class DomainParticipant implements Entity<DomainParticipantListener
     private volatile SubscriberQos defaultSubscriberQos = SubscriberQos.DEFAULT;
 
     DomainParticipant(int domainId, DomainParticipantQos qos) throws IOException {
+        this(domainId, qos, null);
+    }
+
+    DomainParticipant(int domainId, DomainParticipantQos qos, RtpsTransport transport) throws IOException {
         this.domainId = domainId;
         DomainParticipantQos effectiveQos = qos != null ? qos : DomainParticipantQos.DEFAULT;
         this.qos = new AtomicReference<>(effectiveQos);
@@ -70,7 +75,7 @@ public final class DomainParticipant implements Entity<DomainParticipantListener
                 effectiveQos.networkInterface(),
                 effectiveQos.participantIndex()
         );
-        this.rtpsParticipant = new RtpsParticipant(config);
+        this.rtpsParticipant = transport == null ? new RtpsParticipant(config) : new RtpsParticipant(config, transport);
     }
 
     /**
@@ -120,7 +125,7 @@ public final class DomainParticipant implements Entity<DomainParticipantListener
     // ========== Topic Operations ==========
 
     /**
-     * Creates a topic using automatically derived, unkeyed record type support.
+     * Creates a topic using derived record type support; {@link CdrKey} marks key components.
      * See {@link TypeSupport#forCdrRecord(Class)} for supported types and wire format.
      */
     public <T extends Record> Topic<T> createTopic(String topicName, Class<T> type) {

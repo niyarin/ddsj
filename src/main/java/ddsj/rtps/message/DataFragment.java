@@ -14,7 +14,16 @@ public record DataFragment(
         int sampleSize,
         byte[] fragmentData,
         Optional<RtpsTimestamp> timestamp,
-        Optional<SampleIdentity> relatedSampleIdentity) {
+        Optional<SampleIdentity> relatedSampleIdentity,
+        int statusInfo,
+        boolean keyOnly) {
+
+    public DataFragment(Guid writerGuid, long sequenceNumber, int fragmentStartingNum,
+            int fragmentsInSubmessage, int fragmentSize, int sampleSize, byte[] fragmentData,
+            Optional<RtpsTimestamp> timestamp, Optional<SampleIdentity> relatedSampleIdentity) {
+        this(writerGuid, sequenceNumber, fragmentStartingNum, fragmentsInSubmessage, fragmentSize,
+                sampleSize, fragmentData, timestamp, relatedSampleIdentity, 0, false);
+    }
 
     public DataFragment {
         fragmentData = fragmentData.clone();

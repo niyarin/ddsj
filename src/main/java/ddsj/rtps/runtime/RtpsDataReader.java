@@ -43,6 +43,8 @@ public final class RtpsDataReader<T> implements Closeable {
     private final EntityId entityId;
     private final GuidPrefix guidPrefix;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final java.util.Map<Object, InstanceSnapshot> instances = new java.util.HashMap<>();
+    private final java.util.Map<Guid, java.util.Map<Object, Long>> lastInstanceSequences = new java.util.HashMap<>();
     private final ReaderSampleQueue<ReceivedSample<T>> messages;
     private final AtomicLong sampleRejectedCount = new AtomicLong();
     private final AtomicLong deserializationErrorCount = new AtomicLong();
@@ -126,16 +128,22 @@ public final class RtpsDataReader<T> implements Closeable {
         List<Closeable> opened = new ArrayList<>();
         if (ownsParticipant) opened.add(participant);
         try {
-            this.entityId = participant.allocateEntityId(false);
+            this.entityId = participant.allocateEntityId(false, serializer.hasKey());
             this.guidPrefix = participant.guidPrefix();
             this.endpointResolver = new EndpointResolver(endpoint, participant.remoteParticipants(),
-                    participant.publications(), participant.subscriptions());
+                    participant.publications(), participant.subscriptions(), serializer.hasKey());
             this.endpoint = endpoint;
-            this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(), endpoint.resourceLimits());
+            this.messages = new ReaderSampleQueue<>(endpoint.qos().history(), endpoint.qos().depth(),
+                    endpoint.resourceLimits(), sample -> serializer.hasKey()
+                            ? Objects.requireNonNull(serializer.extractKey(sample.data()), "instance key") : null);
+            this.messages.setSequenceComparator((a, b) -> a.writerGuid().equals(b.writerGuid())
+                    ? Long.compare(a.sequenceNumber(), b.sequenceNumber()) : 0);
             this.serializer = serializer;
             this.transport = participant.transport();
             this.userDataReader = new RtpsUserDataReader(transport, guidPrefix, entityId,
-                    this::onSample, this::onHeartbeat, ignored -> { });
+                    this::onSample, this::onHeartbeat, ignored -> { }, gap -> {
+                        if (endpointResolver.acceptsPublication(gap.writerGuid(), true)) history.recordGap(gap);
+                    });
             opened.add(userDataReader);
 
             // Initialize deadline monitor if deadline is finite
@@ -213,6 +221,12 @@ public final class RtpsDataReader<T> implements Closeable {
      */
     public List<ReceivedSample<T>> drainWithMetadata() {
         return drainWithMetadata(Integer.MAX_VALUE);
+    }
+
+    /** Includes samples retained by a higher-level read() cache in KEEP_ALL resource accounting. */
+    public void setRetainedSampleUsage(java.util.function.IntSupplier total,
+            java.util.function.ToIntFunction<Object> perInstance) {
+        messages.setRetainedUsage(total, perInstance);
     }
 
     /** Removes one queued value without waiting; empty means no value is available.
@@ -352,7 +366,8 @@ public final class RtpsDataReader<T> implements Closeable {
         }
         final T value;
         try {
-            value = Objects.requireNonNull(serializer.deserialize(sample.payload()), "deserializer returned null");
+            value = Objects.requireNonNull(sample.keyOnly() ? serializer.deserializeKey(sample.payload())
+                    : serializer.deserialize(sample.payload()), "deserializer returned null");
         } catch (RuntimeException cause) {
             var error = new DeserializationError(sample.writerGuid(), sample.sequenceNumber(), cause);
             lastDeserializationError = error;
@@ -365,16 +380,28 @@ public final class RtpsDataReader<T> implements Closeable {
             }
             return;
         }
+        Object key = serializer.hasKey() ? Objects.requireNonNull(serializer.extractKey(value), "instance key") : null;
+        if (!instances.containsKey(key) && instances.size() >= endpoint.resourceLimits().maxInstances()) {
+            sampleRejectedCount.incrementAndGet();
+            return;
+        }
+        InstanceSnapshot previous = instances.getOrDefault(key, InstanceSnapshot.INITIAL);
+        var sequences = lastInstanceSequences.computeIfAbsent(sample.writerGuid(), ignored -> new java.util.HashMap<>());
+        boolean newer = sample.sequenceNumber() > sequences.getOrDefault(key, 0L);
+        InstanceSnapshot snapshot = newer ? previous.apply(sample.writerGuid(), sample.statusInfo()) : previous;
         ReceivedSample<T> receivedSample = new ReceivedSample<>(
                 value,
                 sample.writerGuid(),
                 sample.sequenceNumber(),
-                sample.relatedSampleIdentity());
+                sample.relatedSampleIdentity(), sample.statusInfo(), Optional.of(snapshot),
+                sample.statusInfo() == 0 && !sample.keyOnly());
         if (!messages.offer(receivedSample)) {
             sampleRejectedCount.incrementAndGet();
             return;
         }
         history.record(sample);
+        instances.put(key, snapshot);
+        if (newer) sequences.put(key, sample.sequenceNumber());
         notifyAll();
         if (deadlineMonitor != null) {
             deadlineMonitor.notifyActivity();
@@ -438,6 +465,8 @@ public final class RtpsDataReader<T> implements Closeable {
             Closeables.closeAll(resources);
         } finally {
             messages.clear();
+            instances.clear();
+            lastInstanceSequences.clear();
         }
     }
 }

@@ -33,8 +33,14 @@ public final class RtpsUserDataReader implements Closeable {
     public RtpsUserDataReader(RtpsTransport transport, GuidPrefix localPrefix, EntityId localReaderId,
             Consumer<UserDataSample> onSample, Consumer<Heartbeat> onHeartbeat,
             Consumer<HeartbeatFrag> onHeartbeatFrag) throws IOException {
+        this(transport, localPrefix, localReaderId, onSample, onHeartbeat, onHeartbeatFrag, ignored -> { });
+    }
+
+    public RtpsUserDataReader(RtpsTransport transport, GuidPrefix localPrefix, EntityId localReaderId,
+            Consumer<UserDataSample> onSample, Consumer<Heartbeat> onHeartbeat,
+            Consumer<HeartbeatFrag> onHeartbeatFrag, Consumer<Gap> onGap) throws IOException {
         this.listener = transport.listenUserData(packet ->
-                handlePacket(packet, localPrefix, localReaderId, onSample, onHeartbeat, onHeartbeatFrag));
+                handlePacket(packet, localPrefix, localReaderId, onSample, onHeartbeat, onHeartbeatFrag, onGap));
     }
 
     public RtpsUserDataReader(RtpsTransport transport, EntityId localReaderId, Consumer<UserDataSample> onSample) throws IOException {
@@ -47,7 +53,8 @@ public final class RtpsUserDataReader implements Closeable {
             EntityId localReaderId,
             Consumer<UserDataSample> onSample,
             Consumer<Heartbeat> onHeartbeat,
-            Consumer<HeartbeatFrag> onHeartbeatFrag) {
+            Consumer<HeartbeatFrag> onHeartbeatFrag,
+            Consumer<Gap> onGap) {
         // Share packet framing and context while preserving delivery order by message kind.
         var submessages = new RtpsMessageParser(packet.data(), packet.length()).submessages().stream()
                 .filter(s -> s.acceptsDestination(localPrefix))
@@ -61,6 +68,7 @@ public final class RtpsUserDataReader implements Closeable {
         }
 
         // Handle heartbeats
+        RtpsUserDataParser.readGaps(submessages, localReaderId).forEach(onGap);
         RtpsUserDataParser.readHeartbeats(submessages, localReaderId).forEach(onHeartbeat);
         RtpsUserDataParser.readHeartbeatFrags(submessages, localReaderId).forEach(onHeartbeatFrag);
     }

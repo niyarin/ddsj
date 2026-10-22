@@ -11,7 +11,9 @@ public record UserDataSample(
         long sequenceNumber,
         byte[] payload,
         Optional<RtpsTimestamp> timestamp,
-        Optional<SampleIdentity> relatedSampleIdentity) {
+        Optional<SampleIdentity> relatedSampleIdentity,
+        int statusInfo,
+        boolean keyOnly) {
 
     public UserDataSample(Guid writerGuid, long sequenceNumber, byte[] payload) {
         this(writerGuid, sequenceNumber, payload.clone(), Optional.empty(), Optional.empty());
@@ -22,11 +24,11 @@ public record UserDataSample(
     }
 
     public UserDataSample(Guid writerGuid, long sequenceNumber, byte[] payload, Optional<RtpsTimestamp> timestamp, Optional<SampleIdentity> relatedSampleIdentity) {
-        this.writerGuid = writerGuid;
-        this.sequenceNumber = sequenceNumber;
-        this.payload = payload.clone();
-        this.timestamp = timestamp;
-        this.relatedSampleIdentity = relatedSampleIdentity;
+        this(writerGuid, sequenceNumber, payload, timestamp, relatedSampleIdentity, 0, false);
+    }
+
+    public UserDataSample {
+        payload = payload.clone();
     }
 
     public EntityId writerId() {
